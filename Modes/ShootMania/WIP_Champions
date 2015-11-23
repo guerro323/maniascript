@@ -1,0 +1,313 @@
+/**
+ *  Mode melee
+ */
+
+#Extends "Modes/ShootMania/ModeTournament.Script.txt"
+
+#Include "Libs/Nadeo/ShootMania/SM.Script.txt" as SM
+#Include "Libs/Nadeo/ShootMania/Debug.Script.txt" as Debug
+#Include "Libs/Nadeo/Interface.Script.txt" as Interface
+#Include "Libs/Nadeo/Layers2.Script.txt" as Layers
+#Include "MathLib" as MathLib
+#Include "TextLib" as TextLib
+
+#Const  CompatibleMapTypes  "gesArena, HeroesArena, EliteArena"
+#Const  Version       "2015-09-27"
+#Const  ScriptName      "Champions.Script.txt"
+
+#Const C_Debug True
+
+***StartServer***
+***
+ST2::SetStyle("LibST_SMBaseTeams");
+ST2::SetStyle("LibST_SMWithLegends");
+ST2::CreateCol("DefPoints", _("|Substantive|Hit"), "0", 3., 100.);
+ST2::SetColTextAlign("DefPoints", CMlControl::AlignHorizontal::Right);
+ST2::CreateCol("AtkPoints", _("|Attack,Substantive|Atk"), "0", 3., 110.);
+ST2::SetColTextAlign("AtkPoints", CMlControl::AlignHorizontal::Right);
+ST2::SetColTextSize("AtkPoints", 3.);
+ST2::Build("SM");
+
+Layers::Create("CH_Info");
+Layers::Update("CH_Info", CH_Info());
+
+if (C_Debug) Debug::Load();
+***
+
+***InitVarMap***
+***
+Goals = CSmMapLandmark[];
+declare EliminatedDef = 0;
+declare SoundVariantDef = 0;
+declare EliminatedAtk = 0;
+declare SoundVariantAtk = 0;
+declare PoleTime = 0;
+declare GoalCanBeCaptured = False;
+declare G_UIUpdate = Now + 100;
+G_ReasonMessage1 = "";
+G_ReasonMessage2 = "";
+***
+
+***InitVarTurn***
+***
+G_DefClan = 3-G_AtkClan;
+GoalCanBeCaptured = False;
+foreach (Goal in Goals) Goal.Gauge.Clan = 3-G_AtkClan;
+
+SoundVariantDef = 0;
+SoundVariantAtk = 0;
+EliminatedDef = 0;
+EliminatedAtk = 0;
+***
+
+***StartTurn***
+***
+Interface::CreatePlayersLists("Small", 1., 10, 1);
+***
+
+***OnRequestRespawn***
+***
+PassOn(Event);
+***
+
+***SpawnDef***
+***
+if (DefSpawned >= MaxDef) break;
+if (!Players.existskey(PlayerId)) continue;
+
+declare Player <=> Players[PlayerId];
+declare CurrentWeapon for Player = 1;
+CurrentWeapon = 1;
+SetPlayerAmmoMax(Player, CSmMode::EWeapon::Rocket, C_DefRocketAmmoMax);
+SetPlayerAmmoMax(Player, CSmMode::EWeapon::Laser, C_DefLaserAmmoMax);
+SetPlayerAmmoMax(Player, CSmMode::EWeapon::Nucleus, C_DefNucleusAmmoMax);
+
+Player.AmmoGain		= 1. * C_DefRocketAmmoGain;
+Player.StaminaMax	= 1. * C_DefStaminaMaxMultiplier;
+Player.StaminaGain	= 1. * C_DefStaminaMaxMultiplier;
+Player.ArmorMax		= 100;
+SetPlayerWeapon(Player, CSmMode::EWeapon::Rocket, True); 
+SM::SpawnPlayer(Player, G_DefClan, DefSpawn, Now);
+Player.IsHighlighted = True;
+DefSpawned += 1;
+***
+
+***SpawnAtk***
+***
+if (!Players.existskey(PlayerId)) continue;		
+declare Player <=> Players[PlayerId];
+declare CurrentWeapon for Player = 1;
+SetPlayerAmmoMax(Player, CSmMode::EWeapon::Rocket, C_AtkRocketAmmoMax);
+SetPlayerAmmoMax(Player, CSmMode::EWeapon::Laser, C_AtkLaserAmmoMax);
+SetPlayerAmmoMax(Player, CSmMode::EWeapon::Nucleus, C_AtkNucleusAmmoMax);
+
+Player.StaminaMax	= 1.;
+Player.StaminaGain	= 1.;
+Player.ArmorMax		= 100;
+if (Player.Id == G_Attackers[1]) {
+	CurrentWeapon = 3;
+	Player.ArmorMax		= DefSpawned * 100;
+	Player.AmmoGain		= 1. * C_AtkRocketAmmoGain;
+	SetPlayerWeapon(Player, CSmMode::EWeapon::Rocket, False);
+} else {
+	CurrentWeapon = 2;
+	Player.AmmoGain		= 1. * C_AtkLaserAmmoGain;
+	SetPlayerWeapon(Player, CSmMode::EWeapon::Laser, False);
+ }
+SM::SpawnPlayer(Player, G_AtkClan, AtkSpawn, Now);
+Player.IsHighlighted = True;
+AtkSpawned += 1;
+***
+
+***Event_OnCapture***
+***
+UIManager.UIAll.BigMessage = "";
+
+PlaySound(CUIConfig::EUISound::Capture, 0);
+Message::SendBigMessage(TextLib::Compose("$<%1$> captured the goal!",
+                        Players[G_Attackers[1]].Name), 3000, 10);
+
+if (GetMode() >= 1) {
+
+foreach (PlayerId in Event.Landmark.Sector.PlayersIds) {
+declare Player <=> Players[PlayerId];
+	PointsAtk(Player);
+}
+    MT_Sleep(500);
+	MT_StopTurn(C_GoalCaptured);
+}
+***
+
+***Event_OnHit***
+***
+log(G_DefClan^" > "^G_AtkClan);
+if (Event.Victim.CurrentClan == G_DefClan) { //< Eliminate a standart defenser
+	Event.Damage = 100;
+	SoundVariantDef += 1;
+	EliminatedDef += 1;
+	
+	declare Distance = MathLib::Distance(Event.Shooter.Position, Event.Victim.Position);
+	Distance = MathLib::NearestInteger(Distance*10.0)/10.0;
+	declare DistanceText = TextLib::SubString(TextLib::ToText(Distance), 0, 5);
+	declare DistanceSplit = TextLib::Split(".", DistanceText);
+	
+	if (Event.Shooter.CurWeapon == C_WeaponLaser) NoticeHitDistance(Event.Shooter,
+	   TextLib::Compose(_("%1m !"), DistanceText));
+// Elim last defenders
+	if (ClansNbPlayersAlive[G_DefClan] <= 1 || EliminatedDef >= ClansNbPlayersAlive[G_DefClan]) {
+		PlaySound(CUIConfig::EUISound::VictoryPoint, 0);
+	} 
+	// Elim standard defenders
+	else {
+		PlaySound(CUIConfig::EUISound::TieBreakPoint, SoundVariantDef);
+	}
+			
+	if (ClansNbPlayersAlive[G_DefClan] > 1) {
+		declare DefLeft = ClansNbPlayersAlive[G_DefClan] - 1;
+		if (DefLeft <= 1) {
+			Message::SendStatusMessage(
+				TextLib::Compose(
+					"%1%2", 
+					Teams[G_DefClan - 1].ColorText,
+					_("1 defender left.")
+				), 3000, 2
+			);
+		} else {
+			Message::SendStatusMessage(
+				TextLib::Compose(
+					_("%1 %2 defenders left."), 
+					Teams[G_DefClan - 1].ColorText, 
+					TextLib::ToText(DefLeft)
+				), 3000, 2
+			);
+		}
+	}
+} else { //< Eliminate a standart defenser
+	Event.Damage = 100;
+	SoundVariantAtk += 1;
+	EliminatedAtk += 1;
+	
+		
+	if (Event.Shooter.Score != Null) {
+	declare NbHit for Event.Shooter.Score = 0;
+	declare netwrite Net_LayerST_DefPoints for Event.Shooter = 0;
+		NbHit += 1;
+		Net_LayerST_DefPoints = NbHit;
+	ST2::SetColValue("DefPoints", Event.Shooter.Score, TextLib::ToText(NbHit));
+	}
+	
+	if (Event.Shooter.CurWeapon == C_WeaponLaser) NoticeHitDistance(Event.Shooter,
+	   TextLib::Compose(_("%1m hit!")));
+// Elim last attackers/ultimate
+    if (Event.Victim.Armor <= 100) {
+	if (ClansNbPlayersAlive[G_AtkClan] <= 1 || EliminatedAtk-1 >= ClansNbPlayersAlive[G_AtkClan] || Event.Victim.Id ==
+	G_Attackers[1]) {
+		PlaySound(CUIConfig::EUISound::VictoryPoint, 0);
+	} 
+	// Elim standard defenders
+	else {
+		PlaySound(CUIConfig::EUISound::TieBreakPoint, SoundVariantAtk);
+	}
+			
+	if (ClansNbPlayersAlive[G_AtkClan] > 1) {
+		declare AtkLeft = ClansNbPlayersAlive[G_AtkClan] - 1;
+		if (AtkLeft <= 1) {
+			Message::SendStatusMessage(
+				TextLib::Compose(
+					"%1%2", 
+					Teams[G_AtkClan - 1].ColorText,
+					_("1 attacker left.")
+				), 3000, 2
+			);
+		} else {
+			Message::SendStatusMessage(
+				TextLib::Compose(
+					_("%1 %2 attackers left."), 
+					Teams[G_AtkClan - 1].ColorText, 
+					TextLib::ToText(AtkLeft)
+				), 3000, 2
+			);
+		} }
+	}
+}
+PassOn(Event);
+***
+
+***StartEndTurn***
+***
+Victory::SetRoundWinnerIfNoWinner (G_WinningTurn);
+***
+
+***CompleteEndTurn***
+***
+Interface::DestroyPlayersLists();
+***
+
+***DeleteVarMap***
+***
+EliminatedDef = 0;
+SoundVariantDef = 0;
+EliminatedAtk = 0;
+SoundVariantAtk = 0;
+PoleTime = 0;
+GoalCanBeCaptured = False;
+G_UIUpdate = Now + 100;
+G_ReasonMessage1 = "";
+G_ReasonMessage2 = "";
+
+Goals.clear();
+***
+
+***PlayLoop***
+***
+Layers::Attach("CH_Info");
+Message::Loop();
+
+if (G_UIUpdate < Now) {
+    G_UIUpdate = Now + 250; 
+	Layers::Update("CH_Info", CH_Info());
+}
+
+if (Now >= PoleTime + StartTime) {
+
+foreach (Landmark in Goals) {
+	if (!GoalCanBeCaptured) {
+		GoalCanBeCaptured = True;
+		UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::PhaseChange;
+		UIManager.UIAll.BigMessageSoundVariant = 0;
+		UIManager.UIAll.BigMessage = _("The goal can now be captured.");
+		UIManager.UIAll.CountdownEndTime = -1;
+	}
+	Landmark.Gauge.Clan = G_AtkClan;
+	Landmark.Gauge.Max = MathLib::NearestInteger(S_TimeCapture * 1000) * MapLandmarks_Gauge.count;
+	declare Capture = 0;
+	declare CaptureUlt = False;
+	foreach (PlayerId in Landmark.Sector.PlayersIds) {
+		declare Player <=> Players[PlayerId];
+		if (Player.Id == G_Attackers[1]) CaptureUlt = True;
+		if (Player.CurrentClan == G_AtkClan && Player.Id != G_Attackers[1]) Capture += 1;
+		log(CaptureUlt^" > "^Capture);
+	}
+	if (CaptureUlt)
+	Landmark.Gauge.Speed = Capture;
+    }
+}
+***
+
+Void PointsAtk(CSmPlayer _Helped) {
+	declare Points for _Helped = ["Attack" => 0];
+	Points["Attack"] += 1;
+	ST2::SetColValue("AtkPoints", _Helped.Score, TextLib::ToText(Points["Attack"]));
+}
+
+Text CH_Info() {
+    declare Cr = """ halign="center" valign="center" """;
+/* flemme de mettre un </script>	return """
+	<frame posn="-30 10" >
+	<quad posn="-20" {{{Cr}}} style="Hud3dIcons" sizen="10 10" colorize="29f" substyle="Player3" />
+	<label posn="-10" {{{Cr}}} text="{{{ClansNbPlayersAlive[1]}}}" />
+	<quad posn="0" {{{Cr}}} style="Hud3dIcons" sizen="10 10" colorize="f20" substyle="Player3" />
+	<label posn="10" {{{Cr}}} text="{{{ClansNbPlayersAlive[2]}}}" />
+	</frame>
+	"""; */ return "";
+}
