@@ -1,0 +1,1047 @@
+///////////////////////////////////////////////////////
+////  ********************----- Code parts from me ////
+////  ***--------------- Code parts from ModeSport ////
+////  **------------------- Code parts from others ////
+///////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////
+/* Champions, Second rewrites XDDDD
+From Guerro. */
+///////////////////////////////////////////////////////
+
+#Extends "Modes/ShootMania/MM.Script.txt"
+
+#Include "Libs/Nadeo/Victory.Script.txt" as Victory
+#Include "Libs/Nadeo/ShootMania/WarmUp2.Script.txt" as WarmUp2
+#Include "Libs/Nadeo/Json.Script.txt" as Json
+#Include "Libs/Nadeo/ShootMania/Map.Script.txt" as Map
+
+#Const	ModeVersion				"2015-09-20"
+#Const	ModeScriptName			"ModeGuerro.Script.txt"
+
+// // // // // // // // // // // // 
+//// ---- Settings ---- ////
+#Setting S_TimeLimit 50 as _("Time limit")
+#Setting S_TimePole 20 as _("Time to capture")
+#Setting S_TimeCapture 1.5 as _("Time to capture a pole.")
+#Setting S_QuickMode False as _("Less time between rounds")
+#Setting S_NbPlayersPerTeamMax 4 as _("Numbers of players per team max")
+#Setting S_WarmUpDuration 40 as _("Numbers of seconds for warm-up")
+#Setting S_Mode 0 as _("0 => Champions Tournament, 1 => GEstrategic First-Alpha")
+#Setting S_Turn 9 as _("Turns maximum")
+#Setting S_TurnGap 2 as _("Turns gaps")
+#Setting S_TurnMax 15 as _("Turns max")
+// // // // // // // // // // // // 
+
+// // // // // // // // // // // // 
+//// ---- Const ---- ////
+#Const C_SpawnAtk "SpawnAttack"
+#Const C_SpawnDef "SpawnDefense"
+
+#Const C_DefElimination 0
+#Const C_AtkElimination 1
+#Const C_UltimateElimination 2
+#Const C_GoalCaptured 3
+#Const C_GoalsCaptured 4
+#Const C_OverTime 5
+#Const C_NoGoals 404
+
+#Const C_GEs 1
+#Const C_Champions 2
+
+#Const C_PresentationTime 1000
+
+#Const C_WURocketAmmoMax			4	///< Rocket ammo max
+#Const C_WURocketAmmoGain			1.	///< Rocket ammo regen speed
+#Const C_WULaserAmmoMax				1	///< Laser ammo max
+#Const C_WULaserAmmoGain			1.	///< Laser ammo regen speed
+#Const C_WUNucleusAmmoMax			1	///< Nucleus ammo max
+#Const C_WUNucleusAmmoGain			1.3	///< Nucleus ammo regen speed
+#Const C_DefStaminaMaxMultiplier	0.7 ///< Stamina amount multiplier for the defense
+#Const C_AtkStaminaMaxMultiplier	1.	///< Stamina amount multiplier for the attack
+
+
+#Const C_AtkRocketAmmoMax	4	///< Atk Rocket ammo max
+#Const C_AtkRocketAmmoGain	1.	///< Atk Rocket ammo gain
+#Const C_AtkLaserAmmoMax	1	///< Atk Laser ammo max
+#Const C_AtkLaserAmmoGain	0.8	///< Atk Laser ammo gain
+#Const C_AtkNucleusAmmoMax	1	///< Atk Nucleus ammo max
+#Const C_AtkNucleusAmmoGain	1.	///< Atk Nucleus ammo gain
+
+#Const C_DefRocketAmmoMax	4	///< Def Rocket ammo max
+#Const C_DefRocketAmmoGain	1.	///< Def Rocket ammo gain
+#Const C_DefLaserAmmoMax	1	///< Def Laser ammo max
+#Const C_DefLaserAmmoGain	1.	///< Def Laser ammo gain
+#Const C_DefNucleusAmmoMax	1	///< Def Nucleus ammo max
+#Const C_DefNucleusAmmoGain	1.	///< Def Nucleus ammo gain
+
+
+
+#Const C_WeaponLaser	1
+#Const C_WeaponRocket	2
+#Const C_WeaponNucleus	3
+// // // // // // // // // // // // 
+
+//// ---- Globales ---- ////
+declare Boolean G_OldMap; // IT'S AN OLD MAP, U SEE ??
+declare Boolean MT_QuickStop; // QuickScopping
+declare Integer[Integer][Integer] G_AtkSlot; // \\
+declare Integer[Integer] G_MapScores; // vvvvvv
+declare Integer[Integer] G_MatchPoints; // It was in ModeSport, So I added this like an idiot, pls don't kill me
+declare Integer	G_LastSpecUpdate;				///< Last time the spectators were updated
+declare Integer G_Reason; // u can't.
+declare Integer G_Gameplay; // pls
+declare Integer G_AtkClan; // I need to do a description?
+declare Integer G_DefClan; // rly
+declare Integer G_WinningTurn; // The clan who win the turn ( not clear ? )
+declare Text[Integer] G_NextAtkName; // So, we ... Ok, ...
+declare Text	G_LongestRailName;				///< Name of the player with the longest Laser hit
+declare Text G_ReasonMessage1; // You like to read no?
+declare Text G_ReasonMessage2; // erm
+declare Ident[Integer] G_Attackers; // Ok, this variable will be only used one time.
+declare Vec3	G_MapSpecCamDirection;			///< Spectator camera orientation
+declare Real	G_LongestRailDistance;			///< Distance of the longest Laser hit
+
+// From Commands ( And ModeSport too xd )
+declare Integer G_Override_FirstAtkClan;
+declare Integer G_Override_TossWinner;
+declare Boolean G_Override_NeedWarmUp;
+declare Boolean G_Override_ForceClublinkReload;
+// // // // // // // // // // // // 
+
+// END.......... /*    ----------------     */
+***InitServer***
+***
+log("========--------------------========");
+log("==----------W e l c o me ---------==");
+log("Loaded 'ExtendFile' >"^ModeVersion^" . "^ModeScriptName);
+log("Loaded 'Gamemode' >"^Version^" . "^ScriptName);
+log("==---------S e t t i n g s -------==");
+log("Loaded > S_LoosePoints = ");
+log("========--------------------========");  
+
+// wats a cool thing
+***
+
+***StartServer***
+***
+MB_UseSectionRound		= True;
+MB_UseSectionTurn = True;
+G_AtkClan = MathLib::Rand(1,2);
+UseClans = True;
+
+G_NextAtkName = [1 => "ERROR", 2 => "ERROR"];
+G_AtkSlot[1] = [1 => 0, 2 => 0];
+G_AtkSlot[2] = [1 => 0, 2 => 0];
+
+G_WinningTurn = 0;
+
+G_Attackers = [1 => Ident, 2 => Ident];
+
+G_ReasonMessage1 = "";
+G_ReasonMessage2 = "";
+
+WarmUp2::Load();
+WarmUp2::CreateGroup("Clan1", S_NbPlayersPerTeamMax);
+WarmUp2::CreateGroup("Clan2", S_NbPlayersPerTeamMax);
+WarmUp2::DisplayClanSelection(True);
+***
+
+***StartMatch***
+***
+G_MapScores = [1 => 0, 2 => 0];
+***
+
+***StartMap***
+***
+UpdateHeader();
+
+declare Goals = CSmMapLandmark[];
+
+declare Spawns = [1 => CSmMapPlayerSpawn, 2 => CSmMapPlayerSpawn];
+
++++InitVarMap+++
+
+foreach (Landmark in MapLandmarks_Gauge) {
+	if (Landmark.Tag == C_SpawnAtk) {
+	Spawns[1] = Landmark.PlayerSpawn;
+	} else if (Landmark.Tag == C_SpawnDef) {
+	Spawns[2] = Landmark.PlayerSpawn;
+	} 
+	
+	if (Landmark.Tag == "Goal A" ||
+	Landmark.Tag == "Goal B" || Landmark.Tag == "Goal C") G_OldMap = True;
+	
+	else {
+		if (Landmark.Tag == "Goal") Goals.add(Landmark);
+	}
+	
+	if (G_OldMap) {
+	if (Landmark.Tag == "Goal A" ||
+	Landmark.Tag == "Goal B" || Landmark.Tag == "Goal C") Goals.add(Landmark);
+	}
+}
+
+log(Goals.count);
+
+
+***
+
+
+
+***InitStartServerRound***
+***
+log(Now^"> Rounds mode actived");
+***
+
+***StartRound***
+***
+Victory::RoundBegin();
+
+for (Clan, 1, 2)
+ClanScores[Clan] = 0;
+
+if (MB_SectionRoundNb <= 1) WarmUp2();
+***
+
+***StartTurn***
+***
+G_DefClan = DefClan();
+
+// ---------------------------------- //
+// init variables
+	+++InitVarTurn+++
+	
+// ---------------------------------- //
+// Stop the map is there are no goals;
+if (Goals.count <= 0) { MT_StopRound(1); }
+
+MT_Sleep(500);
+
+PoleTime = (S_TimeLimit) * 1000;
+
+foreach (Goal in Goals) {
+	Goal.Gauge.Max = PoleTime;
+	Goal.Gauge.Value = Goal.Gauge.Max;
+	Goal.Gauge.Speed = -1;
+}
+
+// ---------------------------------- //
+// Play team presentation
+if (MB_SectionTurnNb <= 1) {
+	UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::ForcedHidden;
+	MT_Presentation(GetSleep()*C_PresentationTime);
+	UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::Normal;
+} else {
+	G_AtkClan = DefClan();
+	G_DefClan = DefClan();
+}
+
+log(G_DefClan^" > "^G_AtkClan);
+
+StartTime = -1;
+EndTime = -1;
+
+WarmUp2::Fill();
+
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
+
+MT_Sleep(200*GetSleep());
+G_Gameplay = GetMode();
+AtkSlot(G_Gameplay);
+G_AtkSlot[G_AtkClan][1] += 1;
+
+declare Message1 = "";
+declare Message2 = "";
+declare TeamAtkName = "";
+declare TeamDefName = "";
+TeamAtkName = Teams[G_AtkClan - 1].ColorizedName;
+TeamDefName = Teams[G_DefClan - 1].ColorizedName;
+UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::PhaseChange;
+UIManager.UIAll.BigMessageSoundVariant = 0;
+for (AtkCount, 1, 2)
+Message1 = TextLib::Compose(_("Attackers : $<%1$>, $<%2$>"), G_NextAtkName[1], G_NextAtkName[2]);
+Message2 = TextLib::Compose(
+	_("$<%1$> attack - defense $<%2$>"), 
+	TeamAtkName, 
+	TeamDefName
+);
+
+UIManager.UIAll.BigMessage = Message1;
+UIManager.UIAll.StatusMessage = Message2;
+
+MT_Sleep(1000*GetSleep());
+
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing ;
+
+MT_Sleep(100*GetSleep());
+
+SpawnPlayers();
+
+StartTime = Now;
+EndTime = Now + ((S_TimeLimit + S_TimePole)*1000);
+
+MT_Sleep(400*GetSleep());
+
+UIManager.UIAll.BigMessage = "";
+UIManager.UIAll.StatusMessage = "";
+
+MT_Sleep(100);
+***
+
+***PlayLoop***
+***
+	foreach (Event in PendingEvents) {
+		if (Event.Type == CSmModeEvent::EType::OnCommand) {
+		
+			}
+		}
+						
+
+foreach (Event, PendingEvents) {
+	// ---------------------------------- //
+	// On armor empty
+	if (Event.Type == CSmModeEvent::EType::OnArmorEmpty) {
+---OnArmorEmpty---
+		XmlRpc::OnArmorEmpty(Event);
+		
+	} 
+	// ---------------------------------- //
+	// On hit
+	else if (Event.Type == CSmModeEvent::EType::OnHit ) {
+	if (Event.Shooter != Null && Event.Victim != Null) {
+ if (Event.Victim.CurrentClan == Event.Shooter.CurrentClan) { ---Event_OnHitAlly--- }
+ if (Event.Victim.CurrentClan != Event.Shooter.CurrentClan) { ---Event_OnHit--- }
+}
+
+//UpdateHitrate(Event.Shooter);
+			XmlRpc::OnHit(Event);
+		
+	
+	}
+	
+		// ---------------------------------- //
+	// On Miss
+	else if (Event.Type == CSmModeEvent::EType::OnNearMiss ) {
+	if (Event.Shooter != Null && Event.Victim != Null)
+---OnMiss---
+
+//UpdateHitrate(Event.Shooter);
+			XmlRpc::OnHit(Event);
+		
+	
+	} 
+	
+	// ---------------------------------- //
+	// On Miss
+	else if (Event.Type == CSmModeEvent::EType::OnCapture ) {
+	if (Event.Landmark != Null)
+---Event_OnCapture---
+		
+	
+	} 
+	
+			// ---------------------------------- //
+	// On Deny
+	else if (Event.Type == CSmModeEvent::EType::OnShotDeny ) {
+	if (Event.Shooter != Null && Event.Victim != Null)
+---OnDeny---
+
+//UpdateHitrate(Event.Shooter);
+			XmlRpc::OnHit(Event);
+		
+	
+	}
+	
+				// ---------------------------------- //
+	// On Deny
+	else if (Event.Type == CSmModeEvent::EType::OnFallDamage  ) {
+	if (Event.Player != Null)
+---OnFall---
+
+//UpdateHitrate(Event.Shooter);
+			XmlRpc::OnHit(Event);
+		
+	
+	}
+	
+		else if (Event.Type == CSmModeEvent::EType::OnShoot ) {
+---OnShoot---
+//UpdateHitrate(Event.Shooter);
+			XmlRpc::OnHit(Event);
+		
+	
+	} 
+	 
+    // ---------------------------------- //
+    // On Custom hit
+    else if (Event.Type == CSmModeEvent::EType::OnActionCustomEvent) {
+    if( Event.Shooter != Null && Event.Victim != Null)
+    ---OnCHit---
+    }
+	
+	else if (Event.Type == CSmModeEvent::EType::OnPlayerRemoved) {
+	---OnPlayerDisconnect---
+	}
+	// ---------------------------------- //
+	// On player request respawn
+	else if (Event.Type == CSmModeEvent::EType::OnPlayerRequestRespawn) {
+---OnRequestRespawn---
+		XmlRpc::OnPlayerRequestRespawn(Event);
+		
+		
+		
+	} 
+	// ---------------------------------- //
+	// Others
+	else {
+		//PassOn(Event);
+	}
+}
+
+if (Now > EndTime && EndTime > 0) {
+MT_StopTurn(C_OverTime);
+}
+
+if (ClansNbPlayersAlive[G_DefClan] <= 0) MT_StopTurn(C_DefElimination);
+if (ClansNbPlayersAlive[G_AtkClan] <= 1 ||
+    AtkEliminated()) MT_StopTurn(C_AtkElimination);
+	
+***
+
+***EndTurn***
+***
+
++++StartEndTurn+++
+
+MT_Sleep(800);
+Message::CleanAllMessages();
+
+MT_Sleep(1000);
+EndTime = -1;
+UIManager.UIAll.CountdownEndTime = -1;
+SM::UnspawnAllPlayers();
+if (G_WinningTurn == 1) ClanScores[1] += 1;
+else ClanScores[2] += 1;
+
++++CompleteEndTurn+++
+
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
+MT_Sleep(200);
+
+UpdateHeader();
+
+UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::EndRound;
+if (G_WinningTurn == G_AtkClan) UIManager.UIAll.BigMessageSoundVariant = 1;
+else if (G_WinningTurn == G_DefClan) UIManager.UIAll.BigMessageSoundVariant = 0;
+
+MT_Sleep(200*GetSleep());
+
+G_ReasonMessage1 = TextLib::Compose(_("$<%1$> wins the turn!"), Teams[G_WinningTurn-1].ColorizedName);
+if (G_AtkClan == G_WinningTurn && GetMode() >= 1) G_ReasonMessage1 = TextLib::Compose(_("$<%1$> wins the turn!"),
+                                                   G_NextAtkName[1]);
+
+if (G_ReasonMessage1 != "") UIManager.UIAll.BigMessage = G_ReasonMessage1;
+if (G_ReasonMessage2 != "") UIManager.UIAll.StatusMessage = G_ReasonMessage2;
+
+MT_Sleep(200*GetSleep());
+
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::ForcedVisible;
+
+MT_Sleep(2000*GetSleep());
+
+UIManager.UIAll.BigMessage = "";
+UIManager.UIAll.StatusMessage = "";
+
++++EndEndTurn+++ /* you wot? */
+
+MT_Sleep(450*GetSleep());
+
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::Normal;
+
+Victory::SetMatchWinnerFromScore(S_Turn, S_TurnGap, S_TurnMax);
+
+MT_Sleep(300);
+
+if (Victory::IsMatchWinner(1)) MB_StopMap = True;
+else if (Victory::IsMatchWinner(2)) MB_StopMap = True;
+
+UIManager.UIAll.BigMessage = "";
+***
+
+***EndRound***
+***
+MT_Sleep(500);
+if (MT_QuickStop) MB_StopMap = True;
+***
+
+***EndMap***
+***
+
+	+++DeleteVarMap+++
+	
+if (Victory::IsMatchWinner(1)) {
+	UIManager.UIAll.BigMessage = TextLib::Compose("$<%1$> wins the map!",
+		                                        Teams[0].ColorizedName); 
+}
+if (Victory::IsMatchWinner(2)) {
+	UIManager.UIAll.BigMessage = TextLib::Compose("$<%1$> wins the map!",
+		                                        Teams[2].ColorizedName); 
+}
+	
+MT_Sleep(5000);
+
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::ForcedVisible;
+
+MT_Sleep(6000);
+
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::Normal;
+
+MT_Sleep(1000);
+
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::None;
+
+MT_Sleep(3000);
+***
+
+// ---------------------------------- //
+/// Update the score summary header.
+Void UpdateHeader() {
+	declare CSmPlayer Player1 <=> Null;
+	declare CSmPlayer Player2 <=> Null;
+	declare HeaderClanScores = Integer[Integer];
+	
+	HeaderClanScores = [1 => G_MapScores[1], 2 => G_MapScores[2]];
+
+	// Find a captain for each clan
+	foreach (Player in Players) {
+		if (Player.CurrentClan == 1) {
+			Player1 <=> Player;
+		} else if (Player.CurrentClan == 2) {
+			Player2 <=> Player;
+		}
+	}
+	
+	UIManager.UIAll.OverlayScoreSummary = True;
+	if (Player1 != Null) {
+		UIManager.UIAll.ScoreSummary_Player1 = Player1.Id;
+		UIManager.UIAll.ScoreSummary_Points1 = ClanScores[1];
+		UIManager.UIAll.ScoreSummary_MatchPoints1 = HeaderClanScores[1];
+	} else {
+		UIManager.UIAll.ScoreSummary_Player1 = NullId;
+		UIManager.UIAll.ScoreSummary_Points1 = 0;
+		UIManager.UIAll.ScoreSummary_MatchPoints1 = 0;
+	}
+
+	if (Player2 != Null) {
+		UIManager.UIAll.ScoreSummary_Player2 = Player2.Id;
+		UIManager.UIAll.ScoreSummary_Points2 = ClanScores[2];
+		UIManager.UIAll.ScoreSummary_MatchPoints2 = HeaderClanScores[2];
+	} else {
+		UIManager.UIAll.ScoreSummary_Player2 = NullId;
+		UIManager.UIAll.ScoreSummary_Points2 = 0;
+		UIManager.UIAll.ScoreSummary_MatchPoints2 = 0;
+	}
+	
+	declare netwrite Clan1MapPoints for XmlRpc = 0;
+	declare netwrite Clan1MatchPoints for XmlRpc = 0;
+	declare netwrite Clan2MapPoints for XmlRpc = 0;
+	declare netwrite Clan2MatchPoints for XmlRpc = 0;
+	Clan1MapPoints = ClanScores[1];
+	Clan1MatchPoints = HeaderClanScores[1];
+	Clan2MapPoints = ClanScores[2];
+	Clan2MatchPoints = HeaderClanScores[2];
+}
+
+Void Lost_Events() { }
+
+Void MT_Sleep(Integer _Duration) {
+   declare Start = Now;
+   while(Now < Start + _Duration) {
+      MB_Yield();
+      Lost_Events();
+   }
+
+}
+
+Void MT_Presentation(Integer _Duration) {
+   declare Start = Now;
+   while(Now < Start + _Duration) {
+      MB_Yield();
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::PlayersPresentation;
+   }
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing ;
+
+}
+
+
+Void PlaySound(CUIConfig::EUISound _Sound, Integer _Variant) {
+	UIManager.UIAll.SendNotice("", CUIConfig::ENoticeLevel::MatchInfo, Null, CUIConfig::EAvatarVariant::Default, _Sound, _Variant);
+}
+
+// ---------------------------------- //
+/// Manage #Command
+Void ManageCommand() {
+	foreach (Event in PendingEvents) {
+		if (Event.Type == CSmModeEvent::EType::OnCommand) {
+			switch (Event.CommandName) {
+				// ---------------------------------- //
+				case "Command_MatchPointsClan1": {
+					if (Event.CommandValueInteger < 0) G_MapScores[1] = 0;
+					else G_MapScores[1] = Event.CommandValueInteger;
+					MB_SectionMapNb = G_MapScores[1] + G_MapScores[2] + 1;
+					
+					UpdateHeader();
+				}
+				// ---------------------------------- //
+				case "Command_MatchPointsClan2": {
+					if (Event.CommandValueInteger < 0) G_MapScores[2] = 0;
+					else G_MapScores[2] = Event.CommandValueInteger;
+					MB_SectionMapNb = G_MapScores[1] + G_MapScores[2] + 1;
+					
+					UpdateHeader();
+				}
+				// ---------------------------------- //
+				case "Command_CurrentMapPointsClan1": {
+					G_MatchPoints[1] -= ClanScores[1];
+					if (Event.CommandValueInteger < 0) ClanScores[1] = 0;
+					else ClanScores[1] = Event.CommandValueInteger;
+					G_MatchPoints[1] += ClanScores[1];
+					MB_SectionTurnNb = ClanScores[1] + ClanScores[2] + 1;
+					
+					UpdateHeader();
+					MM_SetScores([ClanScores[1], ClanScores[2]]);
+				}
+				// ---------------------------------- //
+				case "Command_CurrentMapPointsClan2": {
+					G_MatchPoints[2] -= ClanScores[2];
+					if (Event.CommandValueInteger < 0) ClanScores[2] = 0;
+					else ClanScores[2] = Event.CommandValueInteger;
+					G_MatchPoints[2] += ClanScores[2];
+					MB_SectionTurnNb = ClanScores[1] + ClanScores[2] + 1;
+					
+					UpdateHeader();
+					MM_SetScores([ClanScores[1], ClanScores[2]]);
+				}
+				// ---------------------------------- //
+				case "Command_PreviousMapsPointsClan1": {
+					if (Event.CommandValueInteger < 0) G_MatchPoints[1] = 0;
+					else G_MatchPoints[1] = Event.CommandValueInteger;
+					G_MatchPoints[1] += ClanScores[1];
+				}
+				// ---------------------------------- //
+				case "Command_PreviousMapsPointsClan2": {
+					if (Event.CommandValueInteger < 0) G_MatchPoints[2] = 0;
+					else G_MatchPoints[2] = Event.CommandValueInteger;
+					G_MatchPoints[2] += ClanScores[2];
+				}
+				// ---------------------------------- //
+				case "Command_ForceFirstAtkClan": {
+					if (Event.CommandValueInteger == 1 || Event.CommandValueInteger == 2) G_Override_FirstAtkClan = Event.CommandValueInteger;
+				}
+				// ---------------------------------- //
+				case "Command_ForceTossWinner": {
+					if (Event.CommandValueInteger == 1 || Event.CommandValueInteger == 2) G_Override_TossWinner = Event.CommandValueInteger;
+				}
+				// ---------------------------------- //
+				case "Command_ForceWarmUp": {
+					if (Event.CommandValueBoolean) {
+						G_Override_NeedWarmUp = True;
+					}
+				}
+				// ---------------------------------- //
+				case "Command_ForceClublinkReload": {
+					if (Event.CommandValueBoolean) {
+						G_Override_ForceClublinkReload = True;
+					}
+				}
+			}
+		}
+	}
+}
+
+Void ForceClublinkReload() {
+	if (!G_Override_ForceClublinkReload) return;
+	G_Override_ForceClublinkReload = False;
+	
+	Clublink::ResetAll();
+	Clublink::DefineTeamAuto(True);
+}
+
+Integer GetMode() {
+	declare Mode = S_Mode;
+	if (Mode != 0 && Mode != 1) Mode = 0;
+	return Mode;
+}
+
+Void InitBasesColor() {
+	foreach (Base in MapBases) {
+		Base.Clan = G_DefClan;
+		Base.IsActive = True;
+	}
+	
+	// Get def and atk spawn
+	declare DefSpawn <=> Map::GetLandmarkPlayerSpawn("SpawnDefense", 0);
+	declare AtkSpawn <=> Map::GetLandmarkPlayerSpawn("SpawnAttack", 0);
+	
+	// Color the bases
+	if (DefSpawn.Base != AtkSpawn.Base && DefSpawn.Base != Null && AtkSpawn.Base != Null) {
+		AtkSpawn.Base.Clan = G_AtkClan;
+		AtkSpawn.Base.IsActive = True;
+	}
+}
+
+
+Void SpawnThemAll() {
+	// Get def and atk spawn
+	declare DefSpawn <=> Map::GetPlayerSpawn("SpawnDefense", 0);
+	declare AtkSpawn <=> Map::GetPlayerSpawn("SpawnAttack", 0);
+	
+	// WarmUp classic/free || Waiting time
+		foreach (Player in Players) {	
+			declare WarmUpSide for Player = True;
+			if (Player.SpawnStatus != CSmPlayer::ESpawnStatus::NotSpawned) continue;
+			
+			SetPlayerAmmoMax(Player, CSmMode::EWeapon::Rocket, C_WURocketAmmoMax);
+			SetPlayerAmmoMax(Player, CSmMode::EWeapon::Laser, C_WULaserAmmoMax);
+			SetPlayerAmmoMax(Player, CSmMode::EWeapon::Nucleus, C_WUNucleusAmmoMax);
+			Player.ArmorMax	= 300;
+			if (WarmUpSide) {
+				Player.AmmoGain	= 1. * C_WULaserAmmoGain;
+				Player.StaminaMax = 1.;
+				Player.StaminaGain = 1.;
+				
+				SetPlayerWeapon(Player, CSmMode::EWeapon::Laser, False);
+				SM::SpawnPlayer(Player, MM_GetRequestedClan(Player), Player.ArmorMax, AtkSpawn, Now);
+				SetPlayerAmmo(Player, CSmMode::EWeapon::Nucleus, C_WUNucleusAmmoMax);
+			} else {
+				Player.AmmoGain	= 1. * C_WURocketAmmoGain;
+				Player.StaminaMax = 1. * C_DefStaminaMaxMultiplier;
+				Player.StaminaGain = 1. * C_DefStaminaMaxMultiplier;
+				SetPlayerWeapon(Player, CSmMode::EWeapon::Rocket, True);
+				SM::SpawnPlayer(Player, MM_GetRequestedClan(Player), Player.ArmorMax, DefSpawn, Now);
+				SetPlayerAmmo(Player, CSmMode::EWeapon::Nucleus, C_WUNucleusAmmoMax);
+			}
+			Player.IsHighlighted = True;
+			WarmUpSide = !WarmUpSide;
+	} 	
+	
+	InitBasesColor();
+}
+
+Void UpdateSpectators(Boolean _Forced) {
+	if (!_Forced && G_LastSpecUpdate + 250 > Now) return;
+	G_LastSpecUpdate = Now;
+	UIManager.UIAll.SpectatorCamAutoLongitude = MathLib::Atan2(-G_MapSpecCamDirection.X, -G_MapSpecCamDirection.Z);
+	UIManager.UIAll.SpectatorCamAutoLatitude = 0.5;
+	
+	UIManager.UIAll.SpectatorAutoTarget = G_Attackers[1];
+	
+	declare SpecDefId = NullId;
+	foreach (Player in Players) {
+		if (Player.CurrentClan == G_DefClan && Player.SpawnStatus == CSmPlayer::ESpawnStatus::Spawned) {
+			SpecDefId = Player.Id;
+		}
+	}
+	
+	foreach (Player in Players) {		
+		declare UI <=> UIManager.GetUI(Player);
+		if (UI == Null) continue;
+		
+		// Can select defender to spec
+		if (Player.CurrentClan != 0) {
+			UI.SpectatorForceCameraType = 1;
+			UI.SpectatorForcedClan = Player.CurrentClan;
+		} else if (MM_GetRequestedClan(Player) != 0) {
+			UI.SpectatorForceCameraType = 1;
+			UI.SpectatorForcedClan = MM_GetRequestedClan(Player);
+		} else {
+			UI.SpectatorForceCameraType = -1;
+			UI.SpectatorForcedClan = -1;
+		}
+		
+		declare PrevSpectatorForcedClan for UI = -1;
+		PrevSpectatorForcedClan = UI.SpectatorForcedClan;
+	}
+	
+	foreach (Spectator in Spectators) {
+		declare UI <=> UIManager.GetUI(Spectator);
+		if (UI == Null) continue;
+			
+		if (UI.SpectatorForceCameraType >= 0 || UI.SpectatorForcedClan >= 0) {
+			UI.SpectatorForceCameraType = -2;
+			UI.SpectatorForcedClan = -2;
+			
+			declare PrevSpectatorForcedClan for UI = -1;
+			if (PrevSpectatorForcedClan != UI.SpectatorForcedClan) {
+				PrevSpectatorForcedClan = UI.SpectatorForcedClan;
+					UIManager.UIAll.SendChat(TextLib::Compose("$<%1$> goes into spectator mode", Spectator.Name));
+			}
+		}
+	}
+}
+Void UpdateSpectators() {
+	UpdateSpectators(False);
+}
+
+Void NoticeHitDistance(CSmPlayer _Player, Text _Message) {
+	declare UI <=> UIManager.GetUI(_Player);
+	Message::SendBigMessage(_Player, _Message, 2000, 2);
+}
+
+Void DisplayHitDistance(CSmPlayer _Shooter, CSmPlayer _Victim, Boolean _ShooterOnly) {
+	if (_Shooter == Null || _Victim == Null) return;
+	
+	declare Distance = MathLib::Distance(_Shooter.Position, _Victim.Position);
+	Distance = MathLib::NearestInteger(Distance*10.0)/10.0;
+	declare DistanceText = TextLib::SubString(TextLib::ToText(Distance), 0, 5);
+	declare DistanceSplit = TextLib::Split(".", DistanceText);
+	if (DistanceSplit.count == 1) DistanceText = DistanceSplit[0];
+	declare DistanceMessage = TextLib::Compose(_("%1m hit!"), DistanceText);
+	if (_ShooterOnly) {
+		NoticeHitDistance(_Shooter, DistanceMessage);
+	} else {
+		foreach (Player in Players) {
+			if (Player.CurrentClan == G_AtkClan) {
+				NoticeHitDistance(Player, DistanceMessage);
+			}
+		}
+		foreach (Spectator in Spectators) {
+			NoticeHitDistance(Spectator, DistanceMessage);
+		}
+		if (Distance > G_LongestRailDistance) {
+			G_LongestRailName = _Shooter.Name;
+			G_LongestRailDistance = Distance;
+		}
+	}
+}
+
+
+Void WarmUp2() {
+	XmlRpc::BeginWarmUp();
+	+++StartWarmUp+++
+	
+	if (MB_UseScriptCallbacks && XmlRpc::CallbackIsAllowed("BeginWarmup")) XmlRpc::SendCallback("BeginWarmup", Json::Enfold(Json::Stringify("AllReady", False)));
+	
+	// Shutdown the poles during warmup
+	foreach (Goal in MapLandmarks_Gauge) {
+		Goal.Gauge.Clan = 0;
+		Goal.Gauge.Speed = 0;
+		Goal.Gauge.Value = 0;
+		Goal.Gauge.Max = 1000;
+		Goal.Gauge.Captured = False;
+	}
+	SM::UnspawnAllPlayers();
+	
+	UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing;
+	UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::Silence;
+	UIManager.UIAll.BigMessageSoundVariant = 0;
+	UIManager.UIAll.StatusMessage = _("Press F6 once you're ready.");
+	if (G_Override_NeedWarmUp) UIManager.UIAll.BigMessage = TextLib::Compose("$f90%1", _("Pause"));
+	else UIManager.UIAll.BigMessage = TextLib::Compose("$f90%1", _("Warm-up"));
+	PlaySound(CUIConfig::EUISound::PhaseChange, 0);
+	
+	WarmUp2::Begin();
+	
+	// Init players
+	foreach (Player in Players) {
+		SetPlayerClan(Player, MM_GetRequestedClan(Player));
+		if (Player.CurrentClan == 1) WarmUp2::SetPlayerGroup(Player, "Clan1");
+		else if (Player.CurrentClan == 2) WarmUp2::SetPlayerGroup(Player, "Clan2");
+	}
+	WarmUp2::Fill();
+	
+	declare PrevWarmUpDuration = S_WarmUpDuration-1;
+	declare PrevMode = -1;
+	
+	while (!WarmUp2::Stop()) {
+		MM_Yield();
+		ManageCommand();
+		ForceClublinkReload();
+		
+		// Let the server sleep if there's no players on it
+		if (PlayersNbTotal <= 0) continue;
+		
+		foreach (Player in Players) {
+			if (Player.CurrentClan != MM_GetRequestedClan(Player)) {
+				UnspawnPlayer(Player);
+				SetPlayerClan(Player, MM_GetRequestedClan(Player));
+				if (Player.CurrentClan == 1) WarmUp2::SetPlayerGroup(Player, "Clan1");
+				else if (Player.CurrentClan == 2) WarmUp2::SetPlayerGroup(Player, "Clan2");
+			}
+		}
+		
+		if (PrevMode != GetMode() || PrevWarmUpDuration != S_WarmUpDuration) {
+			PrevMode = GetMode();
+			PrevWarmUpDuration = S_WarmUpDuration;
+			
+			declare LongTimer = S_WarmUpDuration*1000;
+			declare ShortTimer = 5000;
+			if (LongTimer <= 0) { LongTimer = 0; ShortTimer = 0; }
+			
+			if (GetMode() == 0) {
+				WarmUp2::SetGroupTimers("Clan1", [ShortTimer => [-1, S_NbPlayersPerTeamMax], LongTimer => [1, S_NbPlayersPerTeamMax]]);
+				WarmUp2::SetGroupTimers("Clan2", [ShortTimer => [-1, S_NbPlayersPerTeamMax], LongTimer => [1, S_NbPlayersPerTeamMax]]);
+			} else {
+				WarmUp2::SetGroupTimers("Clan1", [ShortTimer => [-1, 1], LongTimer => [1, 1]]);
+				WarmUp2::SetGroupTimers("Clan2", [ShortTimer => [-1, 1], LongTimer => [1, 1]]);
+			}
+		}
+		
+		WarmUp2::Loop();
+		SpawnThemAll();
+		UpdateSpectators();
+		
+		if (WarmUp2::Updated()) {
+			Clublink::DefineTeamAuto(True);
+		}
+		
+		WarmUp2::ManageEvents();
+		foreach (Event in PendingEvents) {
+			if (Event.Type == CSmModeEvent::EType::OnHit && Event.Victim != Null && Event.WeaponNum == C_WeaponLaser) {
+				DisplayHitDistance(Event.Shooter, Event.Victim, True);
+			}
+		}
+	}
+	
+	WarmUp2::End();
+	
+	if (MB_UseScriptCallbacks && XmlRpc::CallbackIsAllowed("EndWarmup")) XmlRpc::SendCallback("EndWarmup", Json::Enfold(Json::Stringify("AllReady", True)));
+	
+	PlaySound(CUIConfig::EUISound::StartMatch, 0);
+	UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::PhaseChange;
+	UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
+	UIManager.UIAll.StatusMessage = "";
+	UIManager.UIAll.BigMessage = "";
+	SM::UnspawnAllPlayers();
+	
+	// ---------------------------------- //
+	// Update the players clublinks
+	Clublink::DefineTeamAuto();
+	Clublink::SyncUpdate();
+	
+	//Layers::Update("ScoresTable", CreateLayerScoresTable());
+	
+	+++EndWarmUp+++
+	XmlRpc::EndWarmUp();
+}
+
+Void MT_StopRound(Integer _Reason) {
+	if (_Reason == C_NoGoals) {
+	    G_Reason = _Reason;
+		MT_QuickStop = True;
+		MB_StopRound = True;
+	}
+}
+
+Void MT_StopTurn(Integer _Reason) {
+G_Reason = _Reason;
+MB_StopTurn = True;
+if (_Reason == C_DefElimination) {
+     G_ReasonMessage2 = _("All defenders eliminated.");
+	 G_WinningTurn = G_AtkClan;
+	}
+if (_Reason == C_AtkElimination) {
+     G_ReasonMessage2 = _("All attackers eliminated.");
+	 G_WinningTurn = G_DefClan;
+	}
+if (_Reason == C_UltimateElimination) {
+     G_ReasonMessage2 = _("Attacker eliminated.");
+	 G_WinningTurn = G_DefClan;
+	}
+if (_Reason == C_GoalCaptured) {
+     G_ReasonMessage2 = _("Goal captured.");
+	 G_WinningTurn = G_AtkClan;
+	}
+if (_Reason == C_GoalsCaptured) {
+     G_ReasonMessage2 = _("Goals captured.");
+	 G_WinningTurn = G_AtkClan;
+	}
+if (_Reason == C_OverTime) {
+     G_ReasonMessage2 = _("Time limit reached.");
+	 G_WinningTurn = G_DefClan;
+	}
+}
+
+Integer GetSleep() {
+	if (S_QuickMode) {
+		return 1;
+	} else return 2;
+	
+	return 0;
+}
+
+Integer DefClan() {
+ log(3-G_AtkClan);
+ return 3-G_AtkClan;
+}
+
+Void AtkSlot(Integer _GamePlay) {
+declare Clan = "Clan1";
+if (G_AtkClan == 2) Clan = "Clan2";
+declare SlotNb = WarmUp2::GetSlotsNb(Clan);
+declare I = 0;
+
+declare F_Gameplay = 1;
+
+if (_GamePlay == C_GEs) F_Gameplay = 1;
+else F_Gameplay = 2;
+
+for (AtkCount, 1, F_Gameplay)
+while (True) {
+	if (G_AtkSlot[G_AtkClan][F_Gameplay] > S_NbPlayersPerTeamMax) G_AtkSlot[G_AtkClan][F_Gameplay] = 1;
+	
+	declare PlayerId = WarmUp2::GetSlot(Clan, G_AtkSlot[G_AtkClan][F_Gameplay]);
+	if (PlayerId != NullId && Players.existskey(PlayerId)) {
+		G_NextAtkName[F_Gameplay] = Players[PlayerId].Name;
+		G_Attackers[F_Gameplay] = PlayerId;
+		declare netwrite Net_Elite_AtkLogin for Teams[0] = "";
+		declare netwrite Net_Elite_AtkSponsors for Teams[0] = Text[];
+		Net_Elite_AtkLogin = Players[PlayerId].Login;
+		log(G_NextAtkName[F_Gameplay]);
+		break;
+	}
+	
+	G_AtkSlot[G_AtkClan][F_Gameplay] += 1;
+	I += 1;
+	if (I >= SlotNb) break;
+}
+}
+
+Void SpawnPlayers() {
+
+declare OrderDef = Ident[Integer];
+declare OrderAtk = Ident[Integer];
+declare DefSpawn <=> Map::GetPlayerSpawn("SpawnDefense", 0);
+declare AtkSpawn <=> Map::GetPlayerSpawn("SpawnAttack", 0);
+declare AtkSpawned = 0;
+declare DefSpawned = 0;
+declare MaxDef = S_NbPlayersPerTeamMax;
+declare MaxAtk = S_NbPlayersPerTeamMax;
+
+if (G_Gameplay == 0) MaxAtk = 1;
+else MaxAtk = MaxDef;
+
+	if (G_AtkClan == 1) {
+		OrderDef = WarmUp2::GetGroup("Clan2");
+		OrderAtk = WarmUp2::GetGroup("Clan1");
+	} else if (G_AtkClan == 2) {
+		OrderDef = WarmUp2::GetGroup("Clan1");
+		OrderAtk = WarmUp2::GetGroup("Clan2");
+	}	
+	foreach (Slot => PlayerId in OrderDef) {
+		+++SpawnDef+++
+}
+	foreach (Slot => PlayerId in OrderAtk) {
+		+++SpawnAtk+++
+	}
+}
+
+Boolean AtkEliminated() {
+foreach (Player in Players) {
+	if (Player.Id == G_Attackers[1]) {
+		if (Player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned) return True;
+	}
+}
+return False;
+}
