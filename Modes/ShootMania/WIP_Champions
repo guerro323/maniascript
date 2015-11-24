@@ -44,7 +44,7 @@ Def_Points["DefPoints"] = 0;
 
 ***StartMap***
 ***
-Users_SetNbFakeUsers(1, 2);
+Users_SetNbFakeUsers(0, 2);
 ST2::ClearScores();
 
 foreach (Player in Players) {
@@ -79,11 +79,22 @@ SoundVariantDef = 0;
 SoundVariantAtk = 0;
 EliminatedDef = 0;
 EliminatedAtk = 0;
+
+	UIManager.UIAll.TeamLabelsVisibility = CUIConfig::ELabelsVisibility::Always;
+	UIManager.UIAll.TeamLabelsShowGauges = CUIConfig::EVisibility::ForcedHidden;
+	UIManager.UIAll.TeamLabelsShowNames = CUIConfig::EVisibility::ForcedHidden;
+	UIManager.UIAll.OpposingTeamLabelsVisibility = CUIConfig::ELabelsVisibility::Never;
 ***
 
 ***StartTurn***
 ***
 Interface::CreatePlayersLists("Small", 1., 10, 1);
+UpdateMarkers();
+***
+
+***StartMap***
+***
+UpdateMarkers();
 ***
 
 ***OnRequestRespawn***
@@ -145,7 +156,7 @@ AtkSpawned += 1;
 ***
 UIManager.UIAll.BigMessage = "";
 
-PlaySound(CUIConfig::EUISound::Capture, 0);
+PlaySound(CUIConfig::EUISound::VictoryPoint, 0);
 Message::SendBigMessage(TextLib::Compose("$<%1$> captured the goal!",
                         Players[G_Attackers[1]].Name), 3000, 10);
 
@@ -305,7 +316,7 @@ foreach (Landmark in Goals) {
 		
 		declare UI for Player = UIManager.GetUI(Player);
 		if (Capture > 0 && Landmark.Sector.PlayersIds.exists(G_Attackers[1])) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "%";
-		else if (Player.Id == G_Attackers[1]) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for an attacker.";
+		else if (Player.Id == G_Attackers[1] && Capture == 0) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for an attacker.";
 		else if (Player.Id != G_Attackers[1] && Player.CurrentClan == G_AtkClan)
         UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for the Champion.";
 	}
@@ -322,6 +333,16 @@ BlockPoleInfo(Player);
 if (ClansNbPlayersAlive[G_DefClan] <= 0) MT_StopTurn(C_DefElimination);
 if (ClansNbPlayersAlive[G_AtkClan] <= 1 && AtkSpawned > 1) MT_StopTurn(C_AtkElimination);
 if (AtkEliminated()) MT_StopTurn(C_UltimateElimination);
+***
+
+***StartWarmUp***
+***
+Interface::CreatePlayersLists("Medium", 0.67, 10, 1);
+
+WarmUp2::SetAllSlotsIcons("Clan1", "file://Media/Manialinks/ShootMania/Common/Laser.dds");
+WarmUp2::SetAllSlotsIcons("Clan2", "file://Media/Manialinks/ShootMania/Common/Laser.dds");
+WarmUp2::SetSlotIcon("Clan1", G_AtkSlot[1][1], "file://Media/Manialinks/ShootMania/Common/Rocket.dds");
+WarmUp2::SetSlotIcon("Clan2", G_AtkSlot[2][1], "file://Media/Manialinks/ShootMania/Common/Rocket.dds");
 ***
 
 Void Points(CSmPlayer _Helped, Text _Input) {
@@ -359,4 +380,47 @@ declare UI for Player = UIManager.GetUI(Player);
 	} else { UI.GaugeRatio = -1000.;
 	UI.GaugeClan = -1;
 	UI.GaugeMessage = ""; }
+}
+
+Void UpdateMarkers() {
+	// Set the marker above the goal
+	UIManager.UIAll.MarkersXML = "";
+	
+	declare AtkPlayerLogin = "";
+	if (Players.existskey(G_Attackers[1])) AtkPlayerLogin = Players[G_Attackers[1]].Login;
+	
+	declare ColorPoles = Teams[G_DefClan - 1].ColorText;
+	declare ColorNucleus = TextLib::SubString(Teams[G_AtkClan - 1].ColorText, 1, 3);
+	
+	declare NucleusMarker = "";
+	if (AtkPlayerLogin != "") {
+		NucleusMarker = """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin}}}" box="0 2 0" />""";
+	}
+	
+	declare PolesMarker = "";
+	foreach (LandmarkGauge in MapLandmarks_Gauge) {
+		declare Icon = "";
+		declare Name = "";
+		if (LandmarkGauge.Tag == "Goal A") { Icon = "PointA"; Name = "$w$s$oA"; }
+		else if (LandmarkGauge.Tag == "Goal B") { Icon = "PointB"; Name = "$w$s$oB"; }
+		else if (LandmarkGauge.Tag == "Goal C") { Icon = "PointC"; Name = "$w$s$oC"; }
+		else continue;
+		PolesMarker ^= """<marker icon="{{{Icon}}}" color="{{{TextLib::ColorToText(Teams[2-G_AtkClan].ColorPrimary)}}}" pos="{{{LandmarkGauge.Position.X}}} {{{LandmarkGauge.Position.Y + 25}}} {{{LandmarkGauge.Position.Z}}}" />""";
+	}
+		
+	foreach (Player in Players) {
+		declare UI <=> UIManager.GetUI(Player);
+		if (UI == Null) continue;
+		
+		if (Player.CurrentClan == G_AtkClan && Player.Login != AtkPlayerLogin) {
+			UI.MarkersXML = NucleusMarker ^ PolesMarker;
+		} else {
+			UI.MarkersXML = PolesMarker;
+		}
+	}
+	foreach (Spectator in Spectators) {
+		declare UI <=> UIManager.GetUI(Spectator);
+		if (UI == Null) continue;
+		UI.MarkersXML = PolesMarker ^ NucleusMarker;
+	}
 }
