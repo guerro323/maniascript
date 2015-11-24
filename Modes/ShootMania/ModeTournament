@@ -156,6 +156,7 @@ declare WinnerMatchClan = -1;		///< Winner Clan for a match
 MB_UseSectionRound		= True;
 MB_UseSectionTurn = True;
 G_AtkClan = MathLib::Rand(1,2);
+G_DefClan = 3-G_AtkClan;
 UseClans = True;
 
 G_NextAtkName = [1 => "ERROR", 2 => "ERROR"];
@@ -320,7 +321,9 @@ SpawnPlayers();
 foreach (Goal in Goals) {
 	Goal.Gauge.Max = PoleTime;
 	Goal.Gauge.Value = Goal.Gauge.Max;
+	Goal.Gauge.Clan = G_DefClan;
 	Goal.Gauge.Speed = -1;
+	InitBasesColor();
 }
 
 UIManager.UIAll.CountdownEndTime = PoleTime + Now;
@@ -449,6 +452,8 @@ foreach (Event, PendingEvents) {
 if (Now > EndTime && EndTime > 0) {
 MT_StopTurn(C_OverTime);
 }
+
+ManageCommand();
 	
 ***
 
