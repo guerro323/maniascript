@@ -1,5 +1,5 @@
 /**
- *  Mode Champions
+ *  Mode melee
  */
 
 #Extends "Modes/ShootMania/ModeTournament.Script.txt"
@@ -34,6 +34,25 @@ Layers::Update("CH_Info", CH_Info());
 if (C_Debug) Debug::Load();
 ***
 
+***Players_ClearScores***
+***
+declare Atk_Points for Player = ["Attack" => 0];
+declare Def_Points for Player = ["DefPoints" => 0];
+Atk_Points["Attack"] = 0;
+Def_Points["DefPoints"] = 0;
+***
+
+***StartMap***
+***
+Users_SetNbFakeUsers(1, 2);
+ST2::ClearScores();
+
+foreach (Player in Players) {
+---Players_ClearScores---
+}
+
+***
+
 ***InitVarMap***
 ***
 Goals = CSmMapLandmark[];
@@ -46,6 +65,8 @@ declare GoalCanBeCaptured = False;
 declare G_UIUpdate = Now + 100;
 G_ReasonMessage1 = "";
 G_ReasonMessage2 = "";
+G_Reason = -1;
+G_TiePoints = -1;
 ***
 
 ***InitVarTurn***
@@ -97,7 +118,7 @@ DefSpawned += 1;
 if (!Players.existskey(PlayerId)) continue;		
 declare Player <=> Players[PlayerId];
 declare CurrentWeapon for Player = 1;
-SetPlayerAmmoMax(Player, CSmMode::EWeapon::Rocket, C_AtkRocketAmmoMax);
+SetPlayerAmmoMax(Player, CSmMode::EWeapon::Rocket, C_AtkRocketAmmoMax-2);
 SetPlayerAmmoMax(Player, CSmMode::EWeapon::Laser, C_AtkLaserAmmoMax);
 SetPlayerAmmoMax(Player, CSmMode::EWeapon::Nucleus, C_AtkNucleusAmmoMax);
 
@@ -106,7 +127,8 @@ Player.StaminaGain	= 1.;
 Player.ArmorMax		= 100;
 if (Player.Id == G_Attackers[1]) {
 	CurrentWeapon = 3;
-	Player.ArmorMax		= DefSpawned * 100;
+	if (DefSpawned <= 1) Player.ArmorMax = 100;
+	else Player.ArmorMax = (DefSpawned * 100) - 100;
 	Player.AmmoGain		= 1. * C_AtkRocketAmmoGain;
 	SetPlayerWeapon(Player, CSmMode::EWeapon::Rocket, False);
 } else {
@@ -131,7 +153,7 @@ if (GetMode() >= 1) {
 
 foreach (PlayerId in Event.Landmark.Sector.PlayersIds) {
 declare Player <=> Players[PlayerId];
-	PointsAtk(Player);
+	Points(Player, "Attack");
 }
     MT_Sleep(500);
 	MT_StopTurn(C_GoalCaptured);
@@ -140,11 +162,12 @@ declare Player <=> Players[PlayerId];
 
 ***Event_OnHit***
 ***
-log(G_DefClan^" > "^G_AtkClan);
+Points(Event.Shooter, "Defend");
 if (Event.Victim.CurrentClan == G_DefClan) { //< Eliminate a standart defenser
 	Event.Damage = 100;
 	SoundVariantDef += 1;
 	EliminatedDef += 1;
+
 	
 	declare Distance = MathLib::Distance(Event.Shooter.Position, Event.Victim.Position);
 	Distance = MathLib::NearestInteger(Distance*10.0)/10.0;
@@ -187,15 +210,6 @@ if (Event.Victim.CurrentClan == G_DefClan) { //< Eliminate a standart defenser
 	SoundVariantAtk += 1;
 	EliminatedAtk += 1;
 	
-		
-	if (Event.Shooter.Score != Null) {
-	declare NbHit for Event.Shooter.Score = 0;
-	declare netwrite Net_LayerST_DefPoints for Event.Shooter = 0;
-		NbHit += 1;
-		Net_LayerST_DefPoints = NbHit;
-	ST2::SetColValue("DefPoints", Event.Shooter.Score, TextLib::ToText(NbHit));
-	}
-	
 	if (Event.Shooter.CurWeapon == C_WeaponLaser) NoticeHitDistance(Event.Shooter,
 	   TextLib::Compose(_("%1m hit!")));
 // Elim last attackers/ultimate
@@ -206,7 +220,7 @@ if (Event.Victim.CurrentClan == G_DefClan) { //< Eliminate a standart defenser
 	} 
 	// Elim standard defenders
 	else {
-		PlaySound(CUIConfig::EUISound::TieBreakPoint, SoundVariantAtk);
+		PlaySound(CUIConfig::EUISound::TiePoint, SoundVariantAtk);
 	}
 			
 	if (ClansNbPlayersAlive[G_AtkClan] > 1) {
@@ -235,6 +249,8 @@ PassOn(Event);
 
 ***StartEndTurn***
 ***
+GoalAdv();
+
 Victory::SetRoundWinnerIfNoWinner (G_WinningTurn);
 ***
 
@@ -254,6 +270,7 @@ GoalCanBeCaptured = False;
 G_UIUpdate = Now + 100;
 G_ReasonMessage1 = "";
 G_ReasonMessage2 = "";
+MT_QuickStop = False;
 
 Goals.clear();
 ***
@@ -281,23 +298,42 @@ foreach (Landmark in Goals) {
 	Landmark.Gauge.Clan = G_AtkClan;
 	Landmark.Gauge.Max = MathLib::NearestInteger(S_TimeCapture * 1000) * MapLandmarks_Gauge.count;
 	declare Capture = 0;
-	declare CaptureUlt = False;
+	declare CaptureUlt = 0;
 	foreach (PlayerId in Landmark.Sector.PlayersIds) {
 		declare Player <=> Players[PlayerId];
-		if (Player.Id == G_Attackers[1]) CaptureUlt = True;
 		if (Player.CurrentClan == G_AtkClan && Player.Id != G_Attackers[1]) Capture += 1;
-		log(CaptureUlt^" > "^Capture);
+		
+		declare UI for Player = UIManager.GetUI(Player);
+		if (Capture > 0 && Landmark.Sector.PlayersIds.exists(G_Attackers[1])) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "%";
+		else if (Player.Id == G_Attackers[1]) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for an attacker.";
+		else if (Player.Id != G_Attackers[1] && Player.CurrentClan == G_AtkClan)
+        UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for the Champion.";
 	}
-	if (CaptureUlt)
+	if (Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned > 1)
 	Landmark.Gauge.Speed = Capture;
+	else if (!Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned > 1) Landmark.Gauge.Speed = 0;
+	else if (Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned == 1) Landmark.Gauge.Speed = 1;
     }
 }
+
+foreach(Player in Players)
+BlockPoleInfo(Player);
+
+if (ClansNbPlayersAlive[G_DefClan] <= 0) MT_StopTurn(C_DefElimination);
+if (ClansNbPlayersAlive[G_AtkClan] <= 1 && AtkSpawned > 1) MT_StopTurn(C_AtkElimination);
+if (AtkEliminated()) MT_StopTurn(C_UltimateElimination);
 ***
 
-Void PointsAtk(CSmPlayer _Helped) {
-	declare Points for _Helped = ["Attack" => 0];
-	Points["Attack"] += 1;
-	ST2::SetColValue("AtkPoints", _Helped.Score, TextLib::ToText(Points["Attack"]));
+Void Points(CSmPlayer _Helped, Text _Input) {
+    if (_Input == "Attack") {
+	declare Atk_Points for _Helped = ["Attack" => 0];
+	Atk_Points["Attack"] += 1;
+	ST2::SetColValue("AtkPoints", _Helped.Score, TextLib::ToText(Atk_Points["Attack"]));
+	} else {
+	declare Def_Points for _Helped = ["DefPoints" => 0];
+	Def_Points["DefPoints"] += 1;
+	ST2::SetColValue("DefPoints", _Helped.Score, TextLib::ToText(Def_Points["DefPoints"]));	
+	}
 }
 
 Text CH_Info() {
@@ -310,4 +346,17 @@ Text CH_Info() {
 	<label posn="10" {{{Cr}}} text="{{{ClansNbPlayersAlive[2]}}}" />
 	</frame>
 	"""; */ return "";
+}
+
+Void BlockPoleInfo(CSmPlayer Player) {
+declare UI for Player = UIManager.GetUI(Player);
+	if (Player.BlockPole != Null) {
+		if (UI != Null) {
+		declare BlockPole <=> Player.BlockPole;
+						UI.GaugeRatio = BlockPole.Gauge.ValueReal;
+						UI.GaugeClan = G_AtkClan;
+		} else return;
+	} else { UI.GaugeRatio = -1000.;
+	UI.GaugeClan = -1;
+	UI.GaugeMessage = ""; }
 }
