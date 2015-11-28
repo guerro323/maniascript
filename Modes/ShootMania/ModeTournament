@@ -9,7 +9,7 @@
 From Guerro. */
 ///////////////////////////////////////////////////////
 
-#Extends "Modes/ShootMania/MM.Script.txt"
+#Extends "Modes/ShootMania/ModeMatchmaking.Script.txt"
 
 #Include "Libs/Nadeo/Victory.Script.txt" as Victory
 #Include "Libs/Nadeo/ShootMania/WarmUp2.Script.txt" as WarmUp2
@@ -160,8 +160,8 @@ G_DefClan = 3-G_AtkClan;
 UseClans = True;
 
 G_NextAtkName = [1 => "ERROR", 2 => "ERROR"];
-G_AtkSlot[1] = [1 => 0, 2 => 0];
-G_AtkSlot[2] = [1 => 0, 2 => 0];
+G_AtkSlot[1] = [1 => 1, 2 => 1];
+G_AtkSlot[2] = [1 => 2, 2 => 2];
 
 G_WinningTurn = 0;
 G_FirstAtk = -1;
@@ -180,6 +180,7 @@ WarmUp2::DisplayClanSelection(True);
 
 ***StartMatch***
 ***
+Victory::MatchBegin();
 G_Practice = S_Practice;
 G_MapScores = [1 => 0, 2 => 0];
 G_Override_FirstAtkClan = -1;
@@ -191,6 +192,8 @@ G_TossWinner = -1;
 
 ***StartMap***
 ***
+if (GetMode() == 1) G_Gameplay = C_GEs;
+else G_Gameplay = C_Champions;
 UpdateHeader();
 
 declare Goals = CSmMapLandmark[];
@@ -284,11 +287,14 @@ WarmUp2::Fill();
 UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
 
 MT_Sleep(200*GetSleep());
-G_Gameplay = GetMode();
+
+if (GetMode() == 1) G_Gameplay = C_GEs;
+else G_Gameplay = C_Champions;
+
 AtkSlot(G_Gameplay);
 G_AtkSlot[G_AtkClan][1] += 1;
 
-log(G_NextAtkName[1]^""^G_NextAtkName[2]);
+log(G_NextAtkName[1]^" < > "^G_NextAtkName[2]);
 
 declare Message1 = "";
 declare Message2 = "";
@@ -300,7 +306,8 @@ UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::PhaseChange;
 UIManager.UIAll.BigMessageSoundVariant = 0;
 
 for (AtkCount, 1, 2)
-Message1 = TextLib::Compose(_("$<%1$> is attacking!"), G_NextAtkName[1], G_NextAtkName[2]);
+if (G_Gameplay == C_GEs) Message1 = TextLib::Compose(_("$<%1$> is attacking!"), G_NextAtkName[1]);
+else Message1 = TextLib::Compose(_("$s$<%1$> will start in attack."), Teams[G_AtkClan-1].ColorizedName);
 Message2 = TextLib::Compose(
 	_("$<%1$> attack - defense $<%2$>"), 
 	TeamAtkName, 
@@ -340,6 +347,23 @@ MT_Sleep(100);
 ***
 
 ***PlayLoop***
+***
+while (!MB_StopServer
+	&& !MatchEndRequested
+	&& !MB_StopMatch
+	&& !MM_RestartMatchmaking
+	&& !MB_StopMap
+	&& !MB_StopSubmatch
+	&& !MB_StopRound
+	&& !MB_StopTurn
+	&& !G_Override_NeedWarmUp
+) {
+    MB_Yield();
+	+++TournamentLoop+++
+}
+***
+
+***TournamentLoop***
 ***
 	foreach (Event in PendingEvents) {
 		if (Event.Type == CSmModeEvent::EType::OnCommand) {
@@ -454,12 +478,20 @@ MT_StopTurn(C_OverTime);
 }
 
 ManageCommand();
-	
+
+if (G_Override_NeedWarmUp) {
+MB_Sleep(100);
+UIManager.UIAll.BigMessage = "";
+MB_Sleep(100);
+G_WinningTurn = 0;
+WarmUp2();
+}	
 ***
 
 ***EndTurn***
 ***
-
+if (!G_Override_NeedWarmUp) {
+GoalAdv();
 +++StartEndTurn+++
 
 MT_Sleep(100);
@@ -523,6 +555,16 @@ MT_Sleep(300);
 
 if (Victory::IsMatchWinner(1)) MB_StopRound = True;
 else if (Victory::IsMatchWinner(2)) MB_StopRound = True;
+} else {
+G_Override_NeedWarmUp = False;
+Message::CleanAllMessages();
++++EndWarmupTurn+++
+MB_Sleep(500);
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::Normal;
+UpdateHeader();
+EndTime = -1;
+StartTime = -1;
+}
 
 UIManager.UIAll.BigMessage = "";
 UIManager.UIAll.GaugeMessage = "";
@@ -1088,10 +1130,18 @@ declare Clan = "Clan1";
 if (G_AtkClan == 2) Clan = "Clan2";
 declare SlotNb = WarmUp2::GetSlotsNb(Clan);
 declare I = 0;
+declare ChampionsSlots = 0;
+
+G_Attackers[1] = NullId;
+G_Attackers[2] = NullId;
+G_NextAtkName[1] = "ERROR";
+G_NextAtkName[2] = "ERROR";
 
 declare NoName = 1;
 
 declare F_Gameplay = 1;
+
+log(_GamePlay^" < Gameplay");
 
 if (_GamePlay == C_GEs) F_Gameplay = 1;
 else F_Gameplay = 2;
@@ -1100,16 +1150,33 @@ while (True) {
 	if (G_AtkSlot[G_AtkClan][F_Gameplay] > S_NbPlayersPerTeamMax) G_AtkSlot[G_AtkClan][F_Gameplay] = 1;
 	
 	declare PlayerId = WarmUp2::GetSlot(Clan, G_AtkSlot[G_AtkClan][F_Gameplay]);
-	if (PlayerId != NullId && PlayerId != G_Attackers[NoName] && Players[PlayerId].Name != G_NextAtkName[NoName] && Players.existskey(PlayerId)) {
-	    NoName = F_Gameplay;
-		G_NextAtkName[NoName] = Players[PlayerId].Name;
-		G_Attackers[NoName] = PlayerId;
+	if (PlayerId != NullId && Players.existskey(PlayerId)) {
+	if (F_Gameplay == 2) {
+	while (ChampionsSlots < F_Gameplay) {
+	    ChampionsSlots += 1;
+		G_NextAtkName[ChampionsSlots] = Players[PlayerId].Name;
+		if (ChampionsSlots == 1) G_Attackers[1] = PlayerId;
+		else G_Attackers[2] = PlayerId;
 		declare netwrite Net_Elite_AtkLogin for Teams[0] = "";
 		declare netwrite Net_Elite_AtkSponsors for Teams[0] = Text[];
 		Net_Elite_AtkLogin = Players[PlayerId].Login;
 		log(G_NextAtkName[NoName]);
+		log(ChampionsSlots);
 		break;
 	}
+	} else {
+		ChampionsSlots += 1;
+		G_NextAtkName[ChampionsSlots] = Players[PlayerId].Name;
+		if (ChampionsSlots == 1) G_Attackers[1] = PlayerId;
+		else G_Attackers[2] = PlayerId;
+		declare netwrite Net_Elite_AtkLogin for Teams[0] = "";
+		declare netwrite Net_Elite_AtkSponsors for Teams[0] = Text[];
+		Net_Elite_AtkLogin = Players[PlayerId].Login;
+		log(G_NextAtkName[NoName]);
+		log(ChampionsSlots);
+		break;
+	}
+}
 	
 	G_AtkSlot[G_AtkClan][F_Gameplay] += 1;
 	I += 1;
@@ -1149,6 +1216,9 @@ else MaxAtk = MaxDef;
 Boolean AtkEliminated() {
 foreach (Player in Players) {
 	if (Player.Id == G_Attackers[1]) {
+		if (Player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned) return True;
+	}
+	if (G_Gameplay != C_GEs && Player.Id == G_Attackers[2]) {
 		if (Player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned) return True;
 	}
 }
