@@ -15,7 +15,7 @@
 #Const  Version       "2015-09-27"
 #Const  ScriptName      "Champions.Script.txt"
 
-#Const C_Debug True
+#Const C_Debug False
 
 ***StartServer***
 ***
@@ -44,7 +44,7 @@ Def_Points["DefPoints"] = 0;
 
 ***StartMap***
 ***
-Users_SetNbFakeUsers(0, 2);
+Users_SetNbFakeUsers(0, 0);
 ST2::ClearScores();
 
 foreach (Player in Players) {
@@ -67,6 +67,33 @@ G_ReasonMessage1 = "";
 G_ReasonMessage2 = "";
 G_Reason = -1;
 G_TiePoints = -1;
+***
+
+***Rules***
+***
+// ---------------------------------- //
+// Create rules
+declare ModeName = "$f60Cham$fffPions";
+SpawnScreen::ResetRulesSection();
+
+SpawnScreen::SetModeColor("29f");
+
+SpawnScreen::AddSubsection(_("Type"), _("Two teams - 4 vs 4 "), 0.);
+SpawnScreen::AddSubsection(
+    _("Objectives"), 
+    TextLib::Compose(_("$<%11. $>The game is divided in rounds of two turns each. During a round each team plays one turn in attack and one turn in defense.\n$<%12. $>The attackers need to eliminate all defenders or capture with his ally the pole between %2 seconds and %3 seconds. The defenders must eliminate the attacker or prevent them from capturing the pole.\n$<%13. $>The team in attack plays with 1 player who got the rocket and the other who got the lasers. The team in defense plays with players using rockets."), "$"^SpawnScreen::GetModeColor(), TextLib::ToText(S_TimeLimit - S_TimeCapture), TextLib::ToText(S_TimeLimit)), 20.);
+SpawnScreen::AddSubsection(
+    _("Important"), 
+    TextLib::Compose(_("$<%11. $>The team that wins the turn scores 1 point.\n$<%12. $>The winning team is the first one to score at least %2 points with %3 ahead of its opponents."), "$"^SpawnScreen::GetModeColor() , TextLib::ToText(S_Turn), TextLib::ToText(S_TurnGap)), 70.);    
+
+SpawnScreen::CreatePrettyRules(ModeName);
+
+ModeStatusMessage = _("TYPE: Team versus Team (4 vs 4)\nOBJECTIVE: Capture the pole when you are the attacker. Defend the pole when you are a defender.");
+***
+
+***StartServer***
+***
+---Rules---
 ***
 
 ***InitVarTurn***
@@ -136,10 +163,17 @@ SetPlayerAmmoMax(Player, CSmMode::EWeapon::Nucleus, C_AtkNucleusAmmoMax);
 Player.StaminaMax	= 1.;
 Player.StaminaGain	= 1.;
 Player.ArmorMax		= 100;
-if (Player.Id == G_Attackers[1]) {
+if (Player.Id == G_Attackers[2] && G_Gameplay == C_Champions) {
 	CurrentWeapon = 3;
-	if (DefSpawned <= 1) Player.ArmorMax = 100;
-	else Player.ArmorMax = (DefSpawned * 100) - 100;
+	//if (DefSpawned <= 1) Player.ArmorMax = 100;
+	/*else*/ Player.ArmorMax = (DefSpawned * 100)/* - 100*/;
+	Player.AmmoGain		= 1.;
+	SetPlayerWeapon(Player, CSmMode::EWeapon::Laser, False);
+}
+else if (Player.Id == G_Attackers[1]) {
+	CurrentWeapon = 3;
+	//if (DefSpawned <= 1) Player.ArmorMax = 100;
+	/*else*/ Player.ArmorMax = (DefSpawned * 100)/* - 100*/;
 	Player.AmmoGain		= 1. * C_AtkRocketAmmoGain;
 	SetPlayerWeapon(Player, CSmMode::EWeapon::Rocket, False);
 } else {
@@ -160,7 +194,7 @@ PlaySound(CUIConfig::EUISound::VictoryPoint, 0);
 Message::SendBigMessage(TextLib::Compose("$<%1$> captured the goal!",
                         Players[G_Attackers[1]].Name), 3000, 10);
 
-if (GetMode() >= 1) {
+if (GetMode() >= 0) {
 
 foreach (PlayerId in Event.Landmark.Sector.PlayersIds) {
 declare Player <=> Players[PlayerId];
@@ -286,8 +320,9 @@ MT_QuickStop = False;
 Goals.clear();
 ***
 
-***PlayLoop***
+***TournamentLoop***
 ***
+//ManageCommand();
 Layers::Attach("CH_Info");
 Message::Loop();
 
@@ -299,7 +334,7 @@ if (G_UIUpdate < Now) {
 if (Now >= PoleTime + StartTime) {
 
 foreach (Landmark in Goals) {
-	if (!GoalCanBeCaptured) {
+	if (!GoalCanBeCaptured && !G_Override_NeedWarmUp) {
 		GoalCanBeCaptured = True;
 		UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::PhaseChange;
 		UIManager.UIAll.BigMessageSoundVariant = 0;
@@ -315,14 +350,20 @@ foreach (Landmark in Goals) {
 		if (Player.CurrentClan == G_AtkClan && Player.Id != G_Attackers[1]) Capture += 1;
 		
 		declare UI for Player = UIManager.GetUI(Player);
-		if (Capture > 0 && Landmark.Sector.PlayersIds.exists(G_Attackers[1])) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "%";
-		else if (Player.Id == G_Attackers[1] && Capture == 0) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for an attacker.";
-		else if (Player.Id != G_Attackers[1] && Player.CurrentClan == G_AtkClan)
+		for (Count, 1, 2) {
+		if (Capture > 0 && Landmark.Sector.PlayersIds.exists(G_Attackers[Count])) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "%";
+		else if (Player.Id == G_Attackers[Count] && Capture == 0) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for an attacker.";
+		else if (Player.Id != G_Attackers[Count] && Player.CurrentClan == G_AtkClan)
         UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for the Champion.";
+        }
 	}
-	if (Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned > 1)
+	if (G_Gameplay == C_GEs && Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned > 1) {
 	Landmark.Gauge.Speed = Capture;
-	else if (!Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned > 1) Landmark.Gauge.Speed = 0;
+	} else if (G_Gameplay == C_Champions && Landmark.Sector.PlayersIds.exists(G_Attackers[1])
+	&& Landmark.Sector.PlayersIds.exists(G_Attackers[2])) {
+	Landmark.Gauge.Speed = 1+Capture;
+	}
+	else if (!Landmark.Sector.PlayersIds.exists(G_Attackers[1])) Landmark.Gauge.Speed = 0;
 	else if (Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned == 1) Landmark.Gauge.Speed = 1;
     }
 }
@@ -341,8 +382,18 @@ Interface::CreatePlayersLists("Medium", 0.67, 10, 1);
 
 WarmUp2::SetAllSlotsIcons("Clan1", "file://Media/Manialinks/ShootMania/Common/Laser.dds");
 WarmUp2::SetAllSlotsIcons("Clan2", "file://Media/Manialinks/ShootMania/Common/Laser.dds");
-WarmUp2::SetSlotIcon("Clan1", G_AtkSlot[1][1], "file://Media/Manialinks/ShootMania/Common/Rocket.dds");
-WarmUp2::SetSlotIcon("Clan2", G_AtkSlot[2][1], "file://Media/Manialinks/ShootMania/Common/Rocket.dds");
+
+log(G_Gameplay);
+
+if (G_Gameplay == C_GEs) {
+for (Count, 1, 2)
+WarmUp2::SetSlotIcon("Clan"^Count, G_AtkSlot[1][1], "file://Media/Manialinks/ShootMania/Common/Rocket.dds");
+} else {
+for (Count, 1, 2) {
+WarmUp2::SetSlotIcon("Clan"^Count, G_AtkSlot[1][Count], "file://Media/Manialinks/ShootMania/Common/WpRocket.dds");
+WarmUp2::SetSlotIcon("Clan"^Count, G_AtkSlot[2][Count], "file://Media/Manialinks/ShootMania/Common/WpLaser.dds");
+}
+}
 ***
 
 Void Points(CSmPlayer _Helped, Text _Input) {
@@ -387,7 +438,9 @@ Void UpdateMarkers() {
 	UIManager.UIAll.MarkersXML = "";
 	
 	declare AtkPlayerLogin = "";
+	declare AtkPlayerLogin2 = "";
 	if (Players.existskey(G_Attackers[1])) AtkPlayerLogin = Players[G_Attackers[1]].Login;
+	if (Players.existskey(G_Attackers[2])) AtkPlayerLogin2 = Players[G_Attackers[2]].Login;
 	
 	declare ColorPoles = Teams[G_DefClan - 1].ColorText;
 	declare ColorNucleus = TextLib::SubString(Teams[G_AtkClan - 1].ColorText, 1, 3);
@@ -395,6 +448,7 @@ Void UpdateMarkers() {
 	declare NucleusMarker = "";
 	if (AtkPlayerLogin != "") {
 		NucleusMarker = """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin}}}" box="0 2 0" />""";
+		NucleusMarker ^= """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin2}}}" box="0 2 0" />""";
 	}
 	
 	declare PolesMarker = "";
