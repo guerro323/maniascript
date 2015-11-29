@@ -244,11 +244,22 @@ else if (Players.count <= 2 || !G_Practice) G_Practice = False;
 for (Clan, 1, 2)
 ClanScores[Clan] = 0;
 
-if (MB_SectionRoundNb <= 1 && !G_Practice) WarmUp2();
+WarmUp2();
 ***
 
 ***StartTurn***
 ***
+foreach (Player in AllPlayers) {
+	SetPlayerClan(Player, MM_GetRequestedClan(Player));
+	
+	// Remove players not allowed by matchmaking
+	if (MM_IsMatchServer() && !MM_PlayerIsValid(Player)) {
+		WarmUp2::UnsetPlayerGroup(Player);
+	} else {
+		if (Player.CurrentClan == 1) WarmUp2::SetPlayerGroup(Player, "Clan1");
+		else if (Player.CurrentClan == 2) WarmUp2::SetPlayerGroup(Player, "Clan2");
+	}
+}
 
 if (S_UseToss) { DoToss(); }
 
