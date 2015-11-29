@@ -19,6 +19,7 @@
 
 ***StartServer***
 ***
+ST2::Reset();
 ST2::SetStyle("LibST_SMBaseTeams");
 ST2::SetStyle("LibST_SMWithLegends");
 ST2::CreateCol("DefPoints", _("|Substantive|Hit"), "0", 3., 100.);
@@ -46,6 +47,7 @@ Def_Points["DefPoints"] = 0;
 ***
 Users_SetNbFakeUsers(0, 0);
 ST2::ClearScores();
+ST2::Attach();
 
 foreach (Player in Players) {
 ---Players_ClearScores---
