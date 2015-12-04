@@ -1,5 +1,7 @@
 /**
- *  Mode Champions - GEstrategic
+ *  Champions - GEstrategic
+ * Gamemode
+ * Made by Guerro
  */
 
 #Extends "Modes/ShootMania/ModeTournament.Script.txt"
@@ -12,7 +14,7 @@
 #Include "MathLib" as MathLib
 #Include "TextLib" as TextLib
 
-#Setting S_Mode 1 as _("$0f01$fff: GEstrategic $4f42$999: Champions")
+#Setting S_Mode 1 as _("$0f01$fff: GEstrategic $4f40$999: Champions")
 
 #Const  CompatibleMapTypes  "gesArena, HeroesArena, EliteArena"
 #Const  Version       "2015-09-27"
@@ -50,7 +52,7 @@ Def_Points["DefPoints"] = 0;
 ***StartMap***
 ***
 ClearScores();
-Users_SetNbFakeUsers(0, 1);
+Users_SetNbFakeUsers(2, 4);
 ST2::ClearScores();
 
 foreach (Player in Players) {
@@ -154,11 +156,12 @@ Player.StaminaMax	= 0.8;
 Player.StaminaGain	= 1.;
 Player.ArmorMax		= 100;
 if (Player.Id == G_Attackers[2] && G_Gameplay == C_Champions) {
-	CurrentWeapon = 3;
+	CurrentWeapon = 2;
 	//if (DefSpawned <= 1) Player.ArmorMax = 100;
 	/*else*/ Player.ArmorMax = (DefSpawned * 100)/* - 100*/;
 	Player.AmmoGain		= 1.;
 	SetPlayerWeapon(Player, CSmMode::EWeapon::Laser, False);
+	SM::SpawnPlayer(Player, G_AtkClan, AtkSpawn, Now+500);
 }
 else if (Player.Id == G_Attackers[1]) {
 	CurrentWeapon = 3;
@@ -166,12 +169,14 @@ else if (Player.Id == G_Attackers[1]) {
 	/*else*/ Player.ArmorMax = (DefSpawned * 100)/* - 100*/;
 	Player.AmmoGain		= 1. * C_AtkRocketAmmoGain;
 	SetPlayerWeapon(Player, CSmMode::EWeapon::Rocket, False);
-} else {
+	SM::SpawnPlayer(Player, G_AtkClan, AtkSpawn, Now+500);
+	
+} else if (Player.Id != G_Attackers[1] && Player.Id != G_Attackers[2] && G_Gameplay == C_GEs) {
 	CurrentWeapon = 2;
 	Player.AmmoGain		= 1. * C_AtkLaserAmmoGain;
 	SetPlayerWeapon(Player, CSmMode::EWeapon::Laser, False);
+	SM::SpawnPlayer(Player, G_AtkClan, AtkSpawn, Now);
  }
-SM::SpawnPlayer(Player, G_AtkClan, AtkSpawn, Now);
 Player.IsHighlighted = True;
 AtkSpawned += 1;
 ***
@@ -192,6 +197,35 @@ declare Player <=> Players[PlayerId];
 }
     MT_Sleep(500);
 	MT_StopTurn(C_GoalCaptured);
+}
+***
+
+***OnSwitch***
+***
+Message::SendBigMessage("Attackers switched!", 3000, 10);
+
+declare Armor = [1 => Event.Victim.Armor, 2 => Event.Shooter.Armor];
+declare Stamina = [1 => Event.Victim.Armor, 2 => Event.Shooter.Armor];
+
+Event.Shooter.Armor = Armor[1];
+Event.Victim.Armor = Armor[2];
+
+Event.Shooter.Stamina = Stamina[1];
+Event.Victim.Stamina = Stamina[2];
+
+SetPlayerWeapon(Event.Shooter, CSmMode::EWeapon::Laser, False);
+SetPlayerWeapon(Event.Victim, CSmMode::EWeapon::Rocket, False);
+
+G_Attackers[1] = Event.Victim.Id;
+G_Attackers[2] = Event.Shooter.Id;
+***
+
+***Event_OnHitAlly***
+***
+if (!TextLib::Find("Storm", ""^LoadedTitle, False, False)) {
+if (Event.Victim.Id == G_Attackers[2] && Event.Shooter.Id == G_Attackers[1]) {
+    +++OnSwitch+++
+}
 }
 ***
 
@@ -241,6 +275,7 @@ if (Event.Victim.CurrentClan == G_DefClan) { //< Eliminate a standart defenser
 		}
 	}
 } else { //< Eliminate a standart defenser
+
 	Event.Damage = 100;
 	SoundVariantAtk += 1;
 	if (Event.Victim.Id != G_Attackers[1]) EliminatedAtk += 1;
@@ -424,7 +459,7 @@ Void UpdateMarkers() {
 	if (Players.existskey(G_Attackers[2])) AtkPlayerLogin[2] = Players[G_Attackers[2]].Login;
 	
 	declare NucleusMarker = "";
-	if (AtkPlayerLogin[1] != "" || AtkPlayerLogin[2] != "") {
+	if (AtkPlayerLogin[1] != "") {
 		NucleusMarker = """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin[1]}}}" box="0 2 0" />""";
 		NucleusMarker ^= """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin[2]}}}" box="0 2 0" />""";
 	}
@@ -444,7 +479,7 @@ Void UpdateMarkers() {
 		declare UI <=> UIManager.GetUI(Player);
 		if (UI == Null) continue;
 		
-		if (Player.CurrentClan == G_AtkClan && Player.Login != AtkPlayerLogin[GetAtkFunction(Player)]) {
+		if (Player.CurrentClan == G_AtkClan && Player.Login != AtkPlayerLogin[3-GetAtkFunction(Player)]) {
 			UI.MarkersXML = NucleusMarker ^ PolesMarker;
 		} else {
 			UI.MarkersXML = PolesMarker;
