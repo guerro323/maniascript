@@ -8,18 +8,20 @@
 #Include "Libs/Nadeo/ShootMania/Debug.Script.txt" as Debug
 #Include "Libs/Nadeo/Interface.Script.txt" as Interface
 #Include "Libs/Nadeo/Layers2.Script.txt" as Layers
+
 #Include "MathLib" as MathLib
 #Include "TextLib" as TextLib
+
+#Setting S_Mode 1 as _("$0f01$fff: GEstrategic $4f42$999: Champions")
 
 #Const  CompatibleMapTypes  "gesArena, HeroesArena, EliteArena"
 #Const  Version       "2015-09-27"
 #Const  ScriptName      "Champions.Script.txt"
 
-#Const C_Debug False
+#Const C_Debug True
 
 ***StartServer***
 ***
-ST2::Reset();
 ST2::SetStyle("LibST_SMBaseTeams");
 ST2::SetStyle("LibST_SMWithLegends");
 ST2::CreateCol("DefPoints", _("|Substantive|Hit"), "0", 3., 100.);
@@ -33,6 +35,8 @@ Layers::Create("CH_Info");
 Layers::Update("CH_Info", CH_Info());
 
 if (C_Debug) Debug::Load();
+
+CreateSpawnScreen("$f60»$z$sThere are 4 attackers, 2 Champions are nammed and they need to capture the poles TOGETHER. The others attacker can't capture.\n$f60»$z$sWhen you attack, you need to capture / kill all defenders. \n$f60»$z$sWhen you defend, you'll need to prevent the capture OR kill a Champion ! You'll respawn after 10 seconds.\n$f60»$z$sThe 2 champions got a markers and got 3 lifes. One have an Rail and the other 4 rockets. \n$f60»$z$sThe 2 others attackers have only one life and a Rail.\n$f60»$z$sOne of all defenders got an nucleus, if he shoot an ally, they'll got an shield.");
 ***
 
 ***Players_ClearScores***
@@ -45,18 +49,23 @@ Def_Points["DefPoints"] = 0;
 
 ***StartMap***
 ***
-Users_SetNbFakeUsers(0, 0);
+ClearScores();
+Users_SetNbFakeUsers(0, 1);
 ST2::ClearScores();
-ST2::Attach();
 
 foreach (Player in Players) {
 ---Players_ClearScores---
 }
-
 ***
 
 ***InitVarMap***
 ***
+if (G_Gameplay != C_GEs) G_ModeName = "Champions";
+else G_ModeName = "GEstrategic";
+
+declare netwrite Text NameToWrite for Teams[0];
+NameToWrite = G_ModeName;
+
 Goals = CSmMapLandmark[];
 declare EliminatedDef = 0;
 declare SoundVariantDef = 0;
@@ -71,33 +80,6 @@ G_Reason = -1;
 G_TiePoints = -1;
 ***
 
-***Rules***
-***
-// ---------------------------------- //
-// Create rules
-declare ModeName = "$f60Cham$fffPions";
-SpawnScreen::ResetRulesSection();
-
-SpawnScreen::SetModeColor("29f");
-
-SpawnScreen::AddSubsection(_("Type"), _("Two teams - 4 vs 4 "), 0.);
-SpawnScreen::AddSubsection(
-    _("Objectives"), 
-    TextLib::Compose(_("$<%11. $>The game is divided in rounds of two turns each. During a round each team plays one turn in attack and one turn in defense.\n$<%12. $>The attackers need to eliminate all defenders or capture with his ally the pole between %2 seconds and %3 seconds. The defenders must eliminate the attacker or prevent them from capturing the pole.\n$<%13. $>The team in attack plays with 1 player who got the rocket and the other who got the lasers. The team in defense plays with players using rockets."), "$"^SpawnScreen::GetModeColor(), TextLib::ToText(S_TimeLimit - S_TimeCapture), TextLib::ToText(S_TimeLimit)), 20.);
-SpawnScreen::AddSubsection(
-    _("Important"), 
-    TextLib::Compose(_("$<%11. $>The team that wins the turn scores 1 point.\n$<%12. $>The winning team is the first one to score at least %2 points with %3 ahead of its opponents."), "$"^SpawnScreen::GetModeColor() , TextLib::ToText(S_Turn), TextLib::ToText(S_TurnGap)), 70.);    
-
-SpawnScreen::CreatePrettyRules(ModeName);
-
-ModeStatusMessage = _("TYPE: Team versus Team (4 vs 4)\nOBJECTIVE: Capture the pole when you are the attacker. Defend the pole when you are a defender.");
-***
-
-***StartServer***
-***
----Rules---
-***
-
 ***InitVarTurn***
 ***
 G_DefClan = 3-G_AtkClan;
@@ -106,13 +88,19 @@ foreach (Goal in Goals) Goal.Gauge.Clan = 3-G_AtkClan;
 
 SoundVariantDef = 0;
 SoundVariantAtk = 0;
-EliminatedDef = 0;
-EliminatedAtk = 0;
+EliminatedDef = -1;
+EliminatedAtk = -1;
 
 	UIManager.UIAll.TeamLabelsVisibility = CUIConfig::ELabelsVisibility::Always;
 	UIManager.UIAll.TeamLabelsShowGauges = CUIConfig::EVisibility::ForcedHidden;
 	UIManager.UIAll.TeamLabelsShowNames = CUIConfig::EVisibility::ForcedHidden;
 	UIManager.UIAll.OpposingTeamLabelsVisibility = CUIConfig::ELabelsVisibility::Never;
+	
+	if (G_Gameplay != C_GEs) G_ModeName = "Champions";
+	else G_ModeName = "GEstrategic";
+	
+	declare netwrite Text NameToWrite for Teams[0];
+	NameToWrite = G_ModeName;
 ***
 
 ***StartTurn***
@@ -162,7 +150,7 @@ SetPlayerAmmoMax(Player, CSmMode::EWeapon::Rocket, C_AtkRocketAmmoMax-2);
 SetPlayerAmmoMax(Player, CSmMode::EWeapon::Laser, C_AtkLaserAmmoMax);
 SetPlayerAmmoMax(Player, CSmMode::EWeapon::Nucleus, C_AtkNucleusAmmoMax);
 
-Player.StaminaMax	= 1.;
+Player.StaminaMax	= 0.8;
 Player.StaminaGain	= 1.;
 Player.ArmorMax		= 100;
 if (Player.Id == G_Attackers[2] && G_Gameplay == C_Champions) {
@@ -224,7 +212,7 @@ if (Event.Victim.CurrentClan == G_DefClan) { //< Eliminate a standart defenser
 	if (Event.Shooter.CurWeapon == C_WeaponLaser) NoticeHitDistance(Event.Shooter,
 	   TextLib::Compose(_("%1m !"), DistanceText));
 // Elim last defenders
-	if (ClansNbPlayersAlive[G_DefClan] <= 1 || EliminatedDef >= ClansNbPlayersAlive[G_DefClan]) {
+	if (ClansNbPlayersAlive[G_DefClan] <= 1 || EliminatedDef-1 >= ClansNbPlayersAlive[G_DefClan]) {
 		PlaySound(CUIConfig::EUISound::VictoryPoint, 0);
 	} 
 	// Elim standard defenders
@@ -255,7 +243,7 @@ if (Event.Victim.CurrentClan == G_DefClan) { //< Eliminate a standart defenser
 } else { //< Eliminate a standart defenser
 	Event.Damage = 100;
 	SoundVariantAtk += 1;
-	EliminatedAtk += 1;
+	if (Event.Victim.Id != G_Attackers[1]) EliminatedAtk += 1;
 	
 	if (Event.Shooter.CurWeapon == C_WeaponLaser) NoticeHitDistance(Event.Shooter,
 	   TextLib::Compose(_("%1m hit!")));
@@ -327,6 +315,8 @@ Goals.clear();
 //ManageCommand();
 Layers::Attach("CH_Info");
 Message::Loop();
+
+if (C_Debug) Debug::Loop();
 
 if (G_UIUpdate < Now) {
     G_UIUpdate = Now + 250; 
@@ -411,25 +401,15 @@ Void Points(CSmPlayer _Helped, Text _Input) {
 }
 
 Text CH_Info() {
-    declare Cr = """ halign="center" valign="center" """;
-/* flemme de mettre un </script>	return """
-	<frame posn="-30 10" >
-	<quad posn="-20" {{{Cr}}} style="Hud3dIcons" sizen="10 10" colorize="29f" substyle="Player3" />
-	<label posn="-10" {{{Cr}}} text="{{{ClansNbPlayersAlive[1]}}}" />
-	<quad posn="0" {{{Cr}}} style="Hud3dIcons" sizen="10 10" colorize="f20" substyle="Player3" />
-	<label posn="10" {{{Cr}}} text="{{{ClansNbPlayersAlive[2]}}}" />
-	</frame>
-	"""; */ return "";
+return "";
 }
 
 Void BlockPoleInfo(CSmPlayer Player) {
 declare UI for Player = UIManager.GetUI(Player);
-	if (Player.BlockPole != Null) {
-		if (UI != Null) {
+	if (Player.BlockPole != Null && UI != Null) {
 		declare BlockPole <=> Player.BlockPole;
-						UI.GaugeRatio = BlockPole.Gauge.ValueReal;
-						UI.GaugeClan = G_AtkClan;
-		} else return;
+		UI.GaugeRatio = BlockPole.Gauge.ValueReal;
+		UI.GaugeClan = G_AtkClan;
 	} else { UI.GaugeRatio = -1000.;
 	UI.GaugeClan = -1;
 	UI.GaugeMessage = ""; }
@@ -439,18 +419,14 @@ Void UpdateMarkers() {
 	// Set the marker above the goal
 	UIManager.UIAll.MarkersXML = "";
 	
-	declare AtkPlayerLogin = "";
-	declare AtkPlayerLogin2 = "";
-	if (Players.existskey(G_Attackers[1])) AtkPlayerLogin = Players[G_Attackers[1]].Login;
-	if (Players.existskey(G_Attackers[2])) AtkPlayerLogin2 = Players[G_Attackers[2]].Login;
-	
-	declare ColorPoles = Teams[G_DefClan - 1].ColorText;
-	declare ColorNucleus = TextLib::SubString(Teams[G_AtkClan - 1].ColorText, 1, 3);
+	declare AtkPlayerLogin = [1 => "", 2 => ""];
+	if (Players.existskey(G_Attackers[1])) AtkPlayerLogin[1] = Players[G_Attackers[1]].Login;
+	if (Players.existskey(G_Attackers[2])) AtkPlayerLogin[2] = Players[G_Attackers[2]].Login;
 	
 	declare NucleusMarker = "";
-	if (AtkPlayerLogin != "") {
-		NucleusMarker = """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin}}}" box="0 2 0" />""";
-		NucleusMarker ^= """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin2}}}" box="0 2 0" />""";
+	if (AtkPlayerLogin[1] != "" || AtkPlayerLogin[2] != "") {
+		NucleusMarker = """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin[1]}}}" box="0 2 0" />""";
+		NucleusMarker ^= """<marker icon="Player3" color="{{{TextLib::ColorToText(Teams[G_AtkClan-1].ColorPrimary)}}}" playerlogin="{{{AtkPlayerLogin[2]}}}" box="0 2 0" />""";
 	}
 	
 	declare PolesMarker = "";
@@ -468,7 +444,7 @@ Void UpdateMarkers() {
 		declare UI <=> UIManager.GetUI(Player);
 		if (UI == Null) continue;
 		
-		if (Player.CurrentClan == G_AtkClan && Player.Login != AtkPlayerLogin) {
+		if (Player.CurrentClan == G_AtkClan && Player.Login != AtkPlayerLogin[GetAtkFunction(Player)]) {
 			UI.MarkersXML = NucleusMarker ^ PolesMarker;
 		} else {
 			UI.MarkersXML = PolesMarker;
