@@ -1,28 +1,25 @@
 ///////////////////////////////////////////////////////
-////  ********************----- Code parts from me ////
-////  ***--------------- Code parts from ModeSport ////
-////  **------------------- Code parts from others ////
-///////////////////////////////////////////////////////
 
-///////////////////////////////////////////////////////
-/* Champions, Second rewrites XDDDD
-From Guerro. */
-///////////////////////////////////////////////////////
+/*
+ * Base mode for Champions, GEstrategic, Escape! .
+ * Champions and GEstrategic share the same script
+ * But Escape use another script.
+ */
 
-#Extends "Modes/ShootMania/ModeMatchmaking.Script.txt"
+#Extends "Modes/ShootMania/MM.Script.txt"
 
 #Include "Libs/Nadeo/Victory.Script.txt" as Victory
 #Include "Libs/Nadeo/ShootMania/WarmUp2.Script.txt" as WarmUp2
 #Include "Libs/Nadeo/Json.Script.txt" as Json
 #Include "Libs/Nadeo/ShootMania/Map.Script.txt" as Map
 #Include "Libs/Nadeo/ShootMania/Toss.Script.txt" as Toss
+#Include "Libs/Nadeo/ShootMania/WaitingQueue.Script.txt" as WQ
 
 #Const	ModeVersion				"2015-09-20"
 #Const	ModeScriptName			"ModeGuerro.Script.txt"
 
 // // // // // // // // // // // // 
 //// ---- Settings ---- ////
-#Setting S_Mode 1 as _("1")
 #Setting S_TimeLimit 50 as _("Attack time limit")
 #Setting S_TimePole 20 as _("Capture time limit")
 #Setting S_TimeCapture 1.5 as _("Capture duration by pole")
@@ -66,7 +63,9 @@ From Guerro. */
 #Const C_NoGoals 404
 
 #Const C_GEs 1
-#Const C_Champions 2
+#Const C_Champions 2 // Escapes use the same properties from Champions
+
+#Const C_UseWQ False
 
 #Const C_PresentationTime 1000
 
@@ -135,22 +134,24 @@ declare Integer G_VoteClanNb;
 declare Boolean G_Practice;
 declare Integer AtkSpawned;
 declare Integer DefSpawned;
+
+declare Text G_ModeName;
 // // // // // // // // // // // // 
 
 // END.......... /*    ----------------     */
 ***InitServer***
 ***
 log("========--------------------========");
-log("==----------W e l c o me ---------==");
+log("==---------- W e l c o me --------==");
 log("Loaded 'ExtendFile' >"^ModeVersion^" . "^ModeScriptName);
 log("Loaded 'Gamemode' >"^Version^" . "^ScriptName);
-log("==---------S e t t i n g s -------==");
-log("Loaded > S_LoosePoints = ");
+log("==--------- . . E n d . . -------==");
 log("========--------------------========");  
 ***
 
 ***StartServer***
 ***
+G_ModeName = "Tournament <--- Not the mode name";
 declare WinnerMatchClan = -1;		///< Winner Clan for a match
 
 MB_UseSectionRound		= True;
@@ -176,11 +177,16 @@ WarmUp2::Load();
 WarmUp2::CreateGroup("Clan1", S_NbPlayersPerTeamMax);
 WarmUp2::CreateGroup("Clan2", S_NbPlayersPerTeamMax);
 WarmUp2::DisplayClanSelection(True);
+
+// Init the waiting queue
+if (C_UseWQ) { 
+	WQ::InitSettings(S_NbPlayersPerTeamMax);
+	WQ::SetShowScore(False);
+}
 ***
 
 ***StartMatch***
 ***
-Victory::MatchBegin();
 G_Practice = S_Practice;
 G_MapScores = [1 => 0, 2 => 0];
 G_Override_FirstAtkClan = -1;
@@ -221,10 +227,6 @@ foreach (Landmark in MapLandmarks_Gauge) {
 	Landmark.Tag == "Goal B" || Landmark.Tag == "Goal C") Goals.add(Landmark);
 	}
 }
-
-log(Goals.count);
-
-
 ***
 
 
@@ -244,22 +246,11 @@ else if (Players.count <= 2 || !G_Practice) G_Practice = False;
 for (Clan, 1, 2)
 ClanScores[Clan] = 0;
 
-WarmUp2();
+if (MB_SectionRoundNb <= 1 && !G_Practice) WarmUp2();
 ***
 
 ***StartTurn***
 ***
-foreach (Player in AllPlayers) {
-	SetPlayerClan(Player, MM_GetRequestedClan(Player));
-	
-	// Remove players not allowed by matchmaking
-	if (MM_IsMatchServer() && !MM_PlayerIsValid(Player)) {
-		WarmUp2::UnsetPlayerGroup(Player);
-	} else {
-		if (Player.CurrentClan == 1) WarmUp2::SetPlayerGroup(Player, "Clan1");
-		else if (Player.CurrentClan == 2) WarmUp2::SetPlayerGroup(Player, "Clan2");
-	}
-}
 
 if (S_UseToss) { DoToss(); }
 
@@ -288,8 +279,6 @@ if (MB_SectionTurnNb <= 1) {
 	G_DefClan = DefClan();
 }
 
-log(G_DefClan^" > "^G_AtkClan);
-
 StartTime = -1;
 EndTime = -1;
 
@@ -304,8 +293,6 @@ else G_Gameplay = C_Champions;
 
 AtkSlot(G_Gameplay);
 G_AtkSlot[G_AtkClan][1] += 1;
-
-log(G_NextAtkName[1]^" < > "^G_NextAtkName[2]);
 
 declare Message1 = "";
 declare Message2 = "";
@@ -489,6 +476,7 @@ MT_StopTurn(C_OverTime);
 }
 
 ManageCommand();
+WQ::UpdateLoop(0);
 
 if (G_Override_NeedWarmUp) {
 MB_Sleep(100);
@@ -523,7 +511,6 @@ StartTime = -1;
 EndTime = -1;
 
 UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
-MT_Sleep(200);
 
 UpdateHeader();
 
@@ -556,7 +543,7 @@ UIManager.UIAll.StatusMessage = "";
 
 +++EndEndTurn+++ /* you wot? */
 
-MT_Sleep(450*GetSleep());
+MT_Sleep(1*GetSleep());
 
 UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::Normal;
 
@@ -1018,7 +1005,7 @@ Void WarmUp2() {
 		MM_Yield();
 		ManageCommand();
 		ForceClublinkReload();
-		
+		WQ::UpdateLoop(1);
 		// Let the server sleep if there's no players on it
 		if (PlayersNbTotal <= 0) continue;
 		
@@ -1132,7 +1119,6 @@ Integer GetSleep() {
 }
 
 Integer DefClan() {
- log(3-G_AtkClan);
  return 3-G_AtkClan;
 }
 
@@ -1152,8 +1138,6 @@ declare NoName = 1;
 
 declare F_Gameplay = 1;
 
-log(_GamePlay^" < Gameplay");
-
 if (_GamePlay == C_GEs) F_Gameplay = 1;
 else F_Gameplay = 2;
 
@@ -1171,8 +1155,6 @@ while (True) {
 		declare netwrite Net_Elite_AtkLogin for Teams[0] = "";
 		declare netwrite Net_Elite_AtkSponsors for Teams[0] = Text[];
 		Net_Elite_AtkLogin = Players[PlayerId].Login;
-		log(G_NextAtkName[NoName]);
-		log(ChampionsSlots);
 		break;
 	}
 	} else {
@@ -1183,8 +1165,6 @@ while (True) {
 		declare netwrite Net_Elite_AtkLogin for Teams[0] = "";
 		declare netwrite Net_Elite_AtkSponsors for Teams[0] = Text[];
 		Net_Elite_AtkLogin = Players[PlayerId].Login;
-		log(G_NextAtkName[NoName]);
-		log(ChampionsSlots);
 		break;
 	}
 }
@@ -1240,11 +1220,9 @@ Void GoalAdv() {
 declare GaugeValue = 0;
 declare MostActivatedGoal <=> CSmMapLandmark;
 foreach (Goal in MapLandmarks_Gauge) {
-log(Goal.Gauge.Clan);
 	Goal.Gauge.Speed = 0;
 
 	if (Goal.Gauge.Clan == G_AtkClan && Goal.Gauge.Value > GaugeValue) {
-	    log("oui");
 		GaugeValue = Goal.Gauge.Value;
 		MostActivatedGoal <=> Goal;
 	}
@@ -1318,4 +1296,87 @@ if (!MM_IsMatchmakingServer() && MB_SectionTurnNb <= 1) {
 	}
 	G_VoteClanNb = 3 - G_VoteClanNb;
 }
+}
+
+Integer GetAtkFunction(CSmPlayer _Player) {
+	if (_Player.Id == G_Attackers[2]) return 2;
+	return 1;
+}
+
+
+Text SpawnScreen() {
+declare C = """ halign="center" valign="center" """;
+declare MText = """ """;
+declare RC = """ colorize="ddd" """;
+declare Cn = "\"";
+declare C_Example = TextLib::Compose(_("$<%11. $>The attacker must capture a pole after %2 seconds and before %3 seconds.\n$<%12. $>The defenders must prevent the attacker from capturing a pole.\n$<%13. $>The game is divided in rounds of two turns each.\n$<%14. $>During a round each team play one turn in attack and one turn in defense.\n$<%15. $>The team who wins the turn scores 1 point.\n$<%16. $>The first team to score at least %4 points with %5 ahead of their opponent wins the map."), "$"^SpawnScreen::GetModeColor(), TextLib::ToText(S_TimeLimit - S_TimePole), TextLib::ToText(S_TimeLimit), TextLib::ToText(S_Turn), TextLib::ToText(S_TurnGap));
+
+MText = """
+<quad style="Bgs1" posn="-300 100 1.23" sizen="300 60" scale="5" substyle="BgListLine" />
+
+<frame id="Complete" posn="0 0 0" scale="1.25" >
+ <label {{{C}}} posn="0 25 5" scale="2" id="TextToComplete2" text="{{{G_ModeName}}}" />
+ <quad {{{C}}} posn="0 20 5" sizen="50 1" style="Bgs1" substyle="BgColorContour" />
+ <label {{{C}}} sizen="145" posn="0 10 5" id="TextToComplete" text="{{{C_Example}}}" />
+</frame>
+
+<frame id="Bottom_Section" posn="0 -50 5">
+ <quad style="Bgs1" posn="-300 0 -1.5" sizen="300 30" scale="5" substyle="BgListLine" />
+	<frame id="FeedBack" posn="-120">
+	 <quad posn="0 0 -1" {{{RC}}} scale="1.5" sizen="20 20" {{{C}}} style="Icons128x128_1" substyle="Vehicles" />
+	 <quad sizen="20 20" {{{C}}} {{{RC}}} style="BgRaceScore2" substyle="Speaking" />
+	 <label posn="40 5" scale="1.75" style="TextButtonNav" text="$5f5FeedBack$fff($5f5s$fff)$5f5?" {{{C}}} />
+	 <label posn="46 -2" scale="1.2" style="TextButtonNav" text="$fffSend a $888P$fff.$888M$fff. to $0f0''$fffguerro$0f0''" {{{C}}} />
+	</frame>
+</frame>
+""";
+	
+	// Script section
+MText ^= """
+
+	<script><!--
+	
+	main() {
+		declare netread TextToWrite for Teams[0] = "";
+		declare netread NameToWrite for Teams[0] = "";
+		declare Label_Text <=> (Page.GetFirstChild("TextToComplete")			as CMlLabel);
+		declare Label_Text2 <=> (Page.GetFirstChild("TextToComplete2")			as CMlLabel);
+		Label_Text.SetText(TextToWrite);
+		 while(True) {
+			yield;
+			
+			Label_Text2.SetText(NameToWrite);
+			}
+	}
+	
+	--></script>
+	
+""";
+
+return MText;
+}
+
+Void CreateSpawnScreen (Text _Input) {
+	declare netwrite TextToWrite for Teams[0] = "";
+	declare NameToWrite = "";
+	TextToWrite = _Input;
+	NameToWrite = G_ModeName;
+	
+	if (!Layers::Exists("SpawnScreen_Text")) {
+	Layers::Create("SpawnScreen_Text");
+	Layers::SetType("SpawnScreen_Text", CUILayer::EUILayerType::ScreenIn3d);
+	}
+	
+	Layers::Update("SpawnScreen_Text", SpawnScreen());
+	Layers::Attach("SpawnScreen_Text");
+	
+}
+
+Void ModifyTextSpawnScreen(Text _Input) {
+	declare netwrite TextToWrite for Teams[0] = "";
+	declare NameToWrite = "";
+	TextToWrite = _Input;
+	NameToWrite = G_ModeName;
+	Layers::Update("SpawnScreen_Text", SpawnScreen());
+	Layers::Attach("SpawnScreen_Text");
 }
