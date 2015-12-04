@@ -1,5 +1,5 @@
 /**
- *  Mode melee
+ *  Mode Champions - GEstrategic
  */
 
 #Extends "Modes/ShootMania/ModeTournament.Script.txt"
