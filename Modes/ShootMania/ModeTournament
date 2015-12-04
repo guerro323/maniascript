@@ -246,11 +246,22 @@ else if (Players.count <= 2 || !G_Practice) G_Practice = False;
 for (Clan, 1, 2)
 ClanScores[Clan] = 0;
 
-if (MB_SectionRoundNb <= 1 && !G_Practice) WarmUp2();
+if (!G_Practice) WarmUp2();
 ***
 
 ***StartTurn***
 ***
+foreach (Player in AllPlayers) {
+	SetPlayerClan(Player, MM_GetRequestedClan(Player));
+	
+	// Remove players not allowed by matchmaking
+	if (MM_IsMatchServer() && !MM_PlayerIsValid(Player)) {
+		WarmUp2::UnsetPlayerGroup(Player);
+	} else {
+		if (Player.CurrentClan == 1) WarmUp2::SetPlayerGroup(Player, "Clan1");
+		else if (Player.CurrentClan == 2) WarmUp2::SetPlayerGroup(Player, "Clan2");
+	}
+}
 
 if (S_UseToss) { DoToss(); }
 
@@ -1027,8 +1038,8 @@ Void WarmUp2() {
 			if (LongTimer <= 0) { LongTimer = 0; ShortTimer = 0; }
 			
 			if (GetMode() == 0) {
-				WarmUp2::SetGroupTimers("Clan1", [ShortTimer => [-1, S_NbPlayersPerTeamMax], LongTimer => [1, S_NbPlayersPerTeamMax]]);
-				WarmUp2::SetGroupTimers("Clan2", [ShortTimer => [-1, S_NbPlayersPerTeamMax], LongTimer => [1, S_NbPlayersPerTeamMax]]);
+				WarmUp2::SetGroupTimers("Clan1", [ShortTimer => [-1, 1], LongTimer => [1, 1]]);
+				WarmUp2::SetGroupTimers("Clan2", [ShortTimer => [-1, 1], LongTimer => [1, 1]]);
 			} else {
 				WarmUp2::SetGroupTimers("Clan1", [ShortTimer => [-1, 1], LongTimer => [1, 1]]);
 				WarmUp2::SetGroupTimers("Clan2", [ShortTimer => [-1, 1], LongTimer => [1, 1]]);
