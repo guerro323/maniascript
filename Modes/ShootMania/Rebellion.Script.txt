@@ -28,17 +28,14 @@
 // Settings
 // ---------------------------------- //
 #Setting S_TimeRecapture 15 as _("Time to re-capture.")
+#Setting S_TimeDefEliminated 20 as _("Time to capture the checkpoint when DefTeam is eliminated.")
 
 /*
  * Apply different settings for this gamemode
  */
-#Setting S_Mode 0
+#Setting S_Mode 0 as _("0: Classic 1: Free")
 #Setting S_TimeLimit	150
 #Setting S_TimeCapture 4.
-
-#Setting S_NbBots			0	///< Number of bots
-
-#Const Description _("TYPE: Free for all\nOBJECTIVE: Hit your opponents to score points. The first player to reach the points limit or the player with the highest score at the end of the time limit wins the map.")
 
 #Const C_Debug True
 
@@ -46,9 +43,6 @@
 
 #Const C_RocketGain					1.		///< Rocket ammo regen speed
 #Const C_LaserGain					0.9		///< Laser ammo regen speed
-#Const C_NucleusGain				0.45		///< Nucleus ammo regen speed
-#Const C_ForceDefWeapon				False	///< Don't let the defense players choose their weapon
-#Const C_ForceAtkWeapon				False	///< Don't let the attack players choose their weapon
 
 #Const C_Interface [
   "ST" => CUILayer::EUILayerType::ScoresTable,
@@ -99,6 +93,11 @@ ST2::ClearScores();
 foreach (Player in Players) {
 ---Players_ClearScores---
 }
+***
+
+***Init***
+***
+G_NextAtkName[1] = Teams[G_AtkClan-1].ColorizedName;
 ***
 
 ***InitVarMap***
@@ -269,6 +268,8 @@ if (Players.existskey(G_Attackers[1]) && Event.Landmark.Tag == "Goals") {
 	Message::SendBigMessage(TextLib::Compose("$<%1$> captured the checkpoint!", Players[G_Attackers[1]].Name), 3000, 10);
 	PlaySound(CUIConfig::EUISound::Capture, 0);
 	
+	Points(Players[G_Attackers[1]], "Attack");
+	
 	Event.Landmark.Gauge.Clan = G_AtkClan;
 	Event.Landmark.Base.Clan = G_AtkClan;
 	
@@ -324,7 +325,7 @@ foreach (Player in Players) {
 ***TournamentLoop***
 ***
 foreach (Goal in MapLandmarks_Gauge) {
-	if (Goal.Gauge.Clan == G_DefClan && Goal.Tag == "Central") {	
+	if (Goal.Gauge.Clan == G_DefClan && Goal.Tag == "Central" && !G_Elimination) {	
 		//UIManager.UIAll.StatusMessage = MathLib::NearestInteger((Goal.Gauge.Value) * 0.001)^" seconds before re-capture.";
 		UIManager.UIAll.CountdownEndTime = Now+Goal.Gauge.Value;
 		if (Goal.Gauge.Value <= 0) {
@@ -371,8 +372,17 @@ if (C_Debug) Debug::Loop();
 foreach (Player in Players) BlockPoleInfo(This.Players[Player]);
 
 if (ClansNbPlayersAlive[G_DefClan] <= 0 && !C_DirectElimination && !G_Elimination) {
-G_Elimination = True;
-UIManager.UIAll.BigMessage = "Capture a checkpoint!";
+	G_Elimination = True;
+	UIManager.UIAll.CountdownEndTime = -1;
+	EndTime = Now + (S_TimeDefEliminated*1000);
+	UIManager.UIAll.CountdownEndTime = -1;
+	
+	foreach (Goal in MapLandmarks_Gauge) {
+	Goal.Gauge.Clan = G_AtkClan;
+	Goal.Gauge.Value = 0;
+	}
+	
+	UIManager.UIAll.BigMessage = "All defenders eliminated, capture a checkpoint!";
 }
 
 if (ClansNbPlayersAlive[G_DefClan] <= 0 && C_DirectElimination) MT_StopTurn(C_DefElimination);
@@ -473,6 +483,12 @@ if (Event.Victim.CurrentClan == G_DefClan) { //< Eliminate a standart defenser
 PassOn(Event);
 ***
 
+***StartEndTurn***
+***
+UIManager.UIAll.BigMessage = "";
+UIManager.UIAll.StatusMessage = "";
+***
+
 ***CompleteEndTurn***
 ***
 Interface::DestroyPlayersLists();
@@ -508,10 +524,20 @@ Void Points(CSmPlayer _Helped, Text _Input) {
 
 Void BlockPoleInfo(CSmPlayer Player) {
 declare UI for Player = UIManager.GetUI(Player);
+
 	if (Player.BlockPole != Null && UI != Null) {
+	declare ReCapture for This.MapLandmarks_Gauge[Player.BlockPole] = False;
 		declare BlockPole <=> Player.BlockPole;
 		UI.GaugeRatio = BlockPole.Gauge.ValueReal;
 		UI.GaugeClan = G_AtkClan;
+		
+		if (BlockPole.Tag == "Goals" && !ReCapture)
+		{
+		UI.GaugeMessage = "Already captured.";
+		} else {
+		UI.GaugeMessage = "" ^ MathLib::FloorInteger(BlockPole.Gauge.ValueReal*100) ^ "%";
+		}
+		
 	} else { UI.GaugeRatio = -1000.;
 	UI.GaugeClan = -1;
 	UI.GaugeMessage = ""; }
