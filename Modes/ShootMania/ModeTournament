@@ -136,6 +136,7 @@ declare Integer AtkSpawned;
 declare Integer DefSpawned;
 
 declare Text G_ModeName;
+declare Boolean G_CustomMode;
 // // // // // // // // // // // // 
 
 // END.......... /*    ----------------     */
@@ -151,6 +152,7 @@ log("========--------------------========");
 
 ***StartServer***
 ***
+G_CustomMode = False;
 G_ModeName = "Tournament <--- Not the mode name";
 declare WinnerMatchClan = -1;		///< Winner Clan for a match
 
@@ -219,7 +221,7 @@ foreach (Landmark in MapLandmarks_Gauge) {
 	Landmark.Tag == "Goal B" || Landmark.Tag == "Goal C") G_OldMap = True;
 	
 	else {
-		if (Landmark.Tag == "Goal") Goals.add(Landmark);
+		if (Landmark.Tag == "Goals") Goals.add(Landmark);
 	}
 	
 	if (G_OldMap) {
@@ -270,6 +272,7 @@ G_DefClan = DefClan();
 // ---------------------------------- //
 // init variables
 	+++InitVarTurn+++
+	+++Mode_StartTurn+++
 	
 // ---------------------------------- //
 // Stop the map is there are no goals;
@@ -277,7 +280,7 @@ if (Goals.count <= 0) { MT_StopRound(1); }
 
 MT_Sleep(500);
 
-PoleTime = (S_TimeLimit) * 1000;
+declare PoleTime = (S_TimeLimit) * 1000;
 
 // ---------------------------------- //
 // Play team presentation
@@ -314,6 +317,8 @@ TeamDefName = Teams[G_DefClan - 1].ColorizedName;
 UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::PhaseChange;
 UIManager.UIAll.BigMessageSoundVariant = 0;
 
++++Init+++
+
 for (AtkCount, 1, 2)
 if (G_Gameplay == C_GEs) Message1 = TextLib::Compose(_("$<%1$> is attacking!"), G_NextAtkName[1]);
 else Message1 = TextLib::Compose(_("$s$<%1$> will start in attack."), Teams[G_AtkClan-1].ColorizedName);
@@ -342,6 +347,9 @@ foreach (Goal in Goals) {
 	InitBasesColor();
 }
 
++++Mode_EndStartTurn1+++
+
+
 UIManager.UIAll.CountdownEndTime = PoleTime + Now;
 
 StartTime = Now;
@@ -353,6 +361,8 @@ UIManager.UIAll.BigMessage = "";
 UIManager.UIAll.StatusMessage = "";
 
 MT_Sleep(100);
+
++++Mode_EndStartTurn2+++
 ***
 
 ***PlayLoop***
@@ -368,6 +378,7 @@ while (!MB_StopServer
 	&& !G_Override_NeedWarmUp
 ) {
     MB_Yield();
+    Message::Loop();
 	+++TournamentLoop+++
 }
 ***
@@ -662,6 +673,10 @@ UIManager.UIAll.UISequence = CUIConfig::EUISequence::None;
 MT_Sleep(10);
 ***
 
+Void AskCustomMode() {
+G_CustomMode = True;
+}
+
 // ---------------------------------- //
 /// Update the score summary header.
 Void UpdateHeader() {
@@ -841,6 +856,10 @@ Void InitBasesColor() {
 	// Get def and atk spawn
 	declare DefSpawn <=> Map::GetLandmarkPlayerSpawn("SpawnDefense", 0);
 	declare AtkSpawn <=> Map::GetLandmarkPlayerSpawn("SpawnAttack", 0);
+	if (G_CustomMode) {
+	DefSpawn <=> Map::GetLandmarkPlayerSpawn("Spawn", 2);
+	AtkSpawn <=> Map::GetLandmarkPlayerSpawn("Spawn", 1);	
+	}
 	
 	// Color the bases
 	if (DefSpawn.Base != AtkSpawn.Base && DefSpawn.Base != Null && AtkSpawn.Base != Null) {
@@ -852,8 +871,14 @@ Void InitBasesColor() {
 
 Void SpawnThemAll() {
 	// Get def and atk spawn
+	declare DefSpawn <=> Map::GetPlayerSpawn("Spawn", 2);
+	declare AtkSpawn <=> Map::GetPlayerSpawn("Spawn", 1);
+	if (!G_CustomMode) {
 	declare DefSpawn <=> Map::GetPlayerSpawn("SpawnDefense", 0);
 	declare AtkSpawn <=> Map::GetPlayerSpawn("SpawnAttack", 0);
+	DefSpawn <=> Map::GetPlayerSpawn("SpawnDefense", 0);
+	AtkSpawn <=> Map::GetPlayerSpawn("SpawnAttack", 0);
+    }
 	
 	// WarmUp classic/free || Waiting time
 		foreach (Player in Players) {	
@@ -1192,6 +1217,10 @@ declare OrderDef = Ident[Integer];
 declare OrderAtk = Ident[Integer];
 declare DefSpawn <=> Map::GetPlayerSpawn("SpawnDefense", 0);
 declare AtkSpawn <=> Map::GetPlayerSpawn("SpawnAttack", 0);
+if (G_CustomMode) {
+DefSpawn <=> Map::GetPlayerSpawn("Spawn", 2);
+AtkSpawn <=> Map::GetPlayerSpawn("Spawn", 1);
+}
 AtkSpawned = 0;
 DefSpawned = 0;
 declare MaxDef = S_NbPlayersPerTeamMax;
