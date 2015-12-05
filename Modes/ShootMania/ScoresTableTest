@@ -1,0 +1,11 @@
+declare I = 0;
+declare ReturnedManialink = """ """;
+
+foreach (Player in Players) {
+ 	I += 50;
+ 	ReturnedManialink ^= """
+ 	<frame posn="0 {{{I}}}">
+ 	<label id="Hello {{{Player.Name}}}"/>
+ 	</frame>
+ 	""";
+}
