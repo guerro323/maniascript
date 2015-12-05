@@ -9,3 +9,5 @@ foreach (Player in Players) {
  	</frame>
  	""";
 }
+
+return ReturnedManialink;
