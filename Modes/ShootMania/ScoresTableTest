@@ -1,11 +1,11 @@
-declare I = 0;
+declare I = 0; ///< Height of each players frame
 declare ReturnedManialink = """ """;
 
 foreach (Player in Players) {
- 	I += 50;
+ 	I += 20;
  	ReturnedManialink ^= """
  	<frame posn="0 {{{I}}}">
- 	<label id="Hello {{{Player.Name}}}"/>
+ 	<label text="Hello {{{Player.Name}}}"/>
  	</frame>
  	""";
 }
