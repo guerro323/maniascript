@@ -9,7 +9,6 @@
 #Include "Libs/Nadeo/ShootMania/SM.Script.txt" as SM
 #Include "Libs/Nadeo/ShootMania/Debug.Script.txt" as Debug
 #Include "Libs/Nadeo/Interface.Script.txt" as Interface
-#Include "Libs/Nadeo/Layers2.Script.txt" as Layers
 
 #Include "MathLib" as MathLib
 #Include "TextLib" as TextLib
@@ -21,6 +20,7 @@
 #Const  ScriptName      "Champions.Script.txt"
 
 #Const C_Debug True
+#Const C_UseCustomEndTime False
 
 ***StartServer***
 ***
@@ -51,8 +51,9 @@ Def_Points["DefPoints"] = 0;
 
 ***StartMap***
 ***
+//while(True) yield;
 ClearScores();
-Users_SetNbFakeUsers(2, 4);
+Users_SetNbFakeUsers(0, 1);
 ST2::ClearScores();
 
 foreach (Player in Players) {
@@ -73,7 +74,7 @@ declare EliminatedDef = 0;
 declare SoundVariantDef = 0;
 declare EliminatedAtk = 0;
 declare SoundVariantAtk = 0;
-declare PoleTime = 0;
+declare CaptureTime = 0;
 declare GoalCanBeCaptured = False;
 declare G_UIUpdate = Now + 100;
 G_ReasonMessage1 = "";
@@ -335,7 +336,7 @@ EliminatedDef = 0;
 SoundVariantDef = 0;
 EliminatedAtk = 0;
 SoundVariantAtk = 0;
-PoleTime = 0;
+CaptureTime = 0;
 GoalCanBeCaptured = False;
 G_UIUpdate = Now + 100;
 G_ReasonMessage1 = "";
@@ -358,7 +359,7 @@ if (G_UIUpdate < Now) {
 	Layers::Update("CH_Info", CH_Info());
 }
 
-if (Now >= PoleTime + StartTime) {
+if (Now >= CaptureTime + StartTime) {
 
 foreach (Landmark in Goals) {
 	if (!GoalCanBeCaptured && !G_Override_NeedWarmUp) {
@@ -374,29 +375,32 @@ foreach (Landmark in Goals) {
 	declare CaptureUlt = 0;
 	foreach (PlayerId in Landmark.Sector.PlayersIds) {
 		declare Player <=> Players[PlayerId];
-		if (Player.CurrentClan == G_AtkClan && Player.Id != G_Attackers[1]) Capture += 1;
+		declare netwrite Boolean[Integer] Net_Players for Teams[0] = [1 => False, 2 => False];
+		if (S_Mode > 0) {
+			if (Player.CurrentClan == G_AtkClan && Player.Id != G_Attackers[1]) Capture += 1;
+		} else {
+			if (Player.CurrentClan == G_AtkClan && Player.Id != G_Attackers[1]
+			&& Player.Id != G_Attackers[2]) Capture += 1;
+		}
 		
-		declare UI for Player = UIManager.GetUI(Player);
-		for (Count, 1, 2) {
-		if (Capture > 0 && Landmark.Sector.PlayersIds.exists(G_Attackers[Count])) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "%";
-		else if (Player.Id == G_Attackers[Count] && Capture == 0) UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for an attacker.";
-		else if (Player.Id != G_Attackers[Count] && Player.CurrentClan == G_AtkClan)
-        UI.GaugeMessage = "" ^ MathLib::FloorInteger(Landmark.Gauge.ValueReal*100) ^ "% | Waiting for the Champion.";
-        }
+		if (Landmark.Sector.PlayersIds.exists(G_Attackers[1])) Net_Players[1] = True;
+		else Net_Players[1] = False;
+		
+		if (Landmark.Sector.PlayersIds.exists(G_Attackers[2])) Net_Players[2] = True;
+		else Net_Players[2] = False;
+
 	}
 	if (G_Gameplay == C_GEs && Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned > 1) {
 	Landmark.Gauge.Speed = Capture;
 	} else if (G_Gameplay == C_Champions && Landmark.Sector.PlayersIds.exists(G_Attackers[1])
 	&& Landmark.Sector.PlayersIds.exists(G_Attackers[2])) {
 	Landmark.Gauge.Speed = 1+Capture;
-	}
+	} else if (G_Gameplay == C_Champions && (!Landmark.Sector.PlayersIds.exists(G_Attackers[1])
+    || !Landmark.Sector.PlayersIds.exists(G_Attackers[2]))) Landmark.Gauge.Speed = 0;
 	else if (!Landmark.Sector.PlayersIds.exists(G_Attackers[1])) Landmark.Gauge.Speed = 0;
 	else if (Landmark.Sector.PlayersIds.exists(G_Attackers[1]) && AtkSpawned == 1) Landmark.Gauge.Speed = 1;
     }
 }
-
-foreach(Player in Players)
-BlockPoleInfo(Player);
 
 if (ClansNbPlayersAlive[G_DefClan] <= 0) MT_StopTurn(C_DefElimination);
 if (ClansNbPlayersAlive[G_AtkClan] <= 1 && AtkSpawned > 1) MT_StopTurn(C_AtkElimination);
