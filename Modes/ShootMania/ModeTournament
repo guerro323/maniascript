@@ -31,8 +31,8 @@
 #Setting S_QuickMode False as _("Less time between rounds")
 #Setting S_NbPlayersPerTeamMax 4 as _("Numbers of players per team max")
 #Setting S_UseToss False as _("Use toss system")
-#Setting S_Practice				False	as _("Play in practice mode")
-#Setting S_PracticeRoundLimit	3		as _("Number of attack turns by player in practice mode")
+#Setting S_Practice				False	as "<hidden>"
+#Setting S_PracticeRoundLimit	3		as "<hidden>"
 // // // // // // // // // // // // 
 
 // // // // // // // // // // // // 
@@ -185,6 +185,8 @@ if (C_UseWQ) {
 	WQ::InitSettings(S_NbPlayersPerTeamMax);
 	WQ::SetShowScore(False);
 }
+
+Layers::Create("Info", CreateLayerInfo());
 ***
 
 ***StartMatch***
@@ -229,6 +231,8 @@ foreach (Landmark in MapLandmarks_Gauge) {
 	Landmark.Tag == "Goal B" || Landmark.Tag == "Goal C") Goals.add(Landmark);
 	}
 }
+
+
 ***
 
 
@@ -241,7 +245,7 @@ log(Now^"> Rounds mode actived");
 ***StartRound***
 ***
 Victory::RoundBegin();
-
+Victory::MatchBegin();
 if (Players.count > 2 && G_Practice) G_Practice = True;
 else if (Players.count <= 2 || !G_Practice) G_Practice = False; 
 
@@ -280,7 +284,7 @@ if (Goals.count <= 0) { MT_StopRound(1); }
 
 MT_Sleep(500);
 
-declare PoleTime = (S_TimeLimit) * 1000;
+CaptureTime = (S_TimeLimit) * 1000;
 
 // ---------------------------------- //
 // Play team presentation
@@ -340,7 +344,7 @@ MT_Sleep(100*GetSleep());
 SpawnPlayers();
 
 foreach (Goal in Goals) {
-	Goal.Gauge.Max = PoleTime;
+	Goal.Gauge.Max = CaptureTime;
 	Goal.Gauge.Value = Goal.Gauge.Max;
 	Goal.Gauge.Clan = G_DefClan;
 	Goal.Gauge.Speed = -1;
@@ -350,7 +354,7 @@ foreach (Goal in Goals) {
 +++Mode_EndStartTurn1+++
 
 
-UIManager.UIAll.CountdownEndTime = PoleTime + Now;
+UIManager.UIAll.CountdownEndTime = CaptureTime + Now;
 
 StartTime = Now;
 EndTime = Now + ((S_TimeLimit + S_TimePole)*1000);
@@ -363,6 +367,9 @@ UIManager.UIAll.StatusMessage = "";
 MT_Sleep(100);
 
 +++Mode_EndStartTurn2+++
+
+Layers::Attach("Info");
+Layers::Update("Info", CreateLayerInfo());
 ***
 
 ***PlayLoop***
@@ -493,7 +500,7 @@ foreach (Event, PendingEvents) {
 	}
 }
 
-if (Now > EndTime && EndTime > 0) {
+if (Now > EndTime && EndTime > 0 && !C_UseCustomEndTime) {
 MT_StopTurn(C_OverTime);
 }
 
@@ -752,6 +759,16 @@ Void PlaySound(CUIConfig::EUISound _Sound, Integer _Variant) {
 	UIManager.UIAll.SendNotice("", CUIConfig::ENoticeLevel::MatchInfo, Null, CUIConfig::EAvatarVariant::Default, _Sound, _Variant);
 }
 
+Void SendNotice(CSmPlayer IPlayer, Text Msg) {
+	if (IPlayer == Null)
+	UIManager.UIAll.SendNotice(Msg, CUIConfig::ENoticeLevel::MatchInfo, Null, CUIConfig::EAvatarVariant::Default, CUIConfig::EUISound::Silence, 0);
+	else {
+	declare UI for IPlayer = UIManager.GetUI(IPlayer);
+	if (UI == Null) return;
+	UI.SendNotice(Msg, CUIConfig::ENoticeLevel::MatchInfo, Null, CUIConfig::EAvatarVariant::Default, CUIConfig::EUISound::Silence, 0);
+	}
+}
+
 // ---------------------------------- //
 /// Manage #Command
 Void ManageCommand() {
@@ -874,12 +891,9 @@ Void SpawnThemAll() {
 	declare DefSpawn <=> Map::GetPlayerSpawn("Spawn", 2);
 	declare AtkSpawn <=> Map::GetPlayerSpawn("Spawn", 1);
 	if (!G_CustomMode) {
-	declare DefSpawn <=> Map::GetPlayerSpawn("SpawnDefense", 0);
-	declare AtkSpawn <=> Map::GetPlayerSpawn("SpawnAttack", 0);
 	DefSpawn <=> Map::GetPlayerSpawn("SpawnDefense", 0);
 	AtkSpawn <=> Map::GetPlayerSpawn("SpawnAttack", 0);
     }
-	
 	// WarmUp classic/free || Waiting time
 		foreach (Player in Players) {	
 			declare WarmUpSide for Player = True;
@@ -1003,7 +1017,6 @@ Void DisplayHitDistance(CSmPlayer _Shooter, CSmPlayer _Victim, Boolean _ShooterO
 Void WarmUp2() {
 	XmlRpc::BeginWarmUp();
 	+++StartWarmUp+++
-	
 	if (MB_UseScriptCallbacks && XmlRpc::CallbackIsAllowed("BeginWarmup")) XmlRpc::SendCallback("BeginWarmup", Json::Enfold(Json::Stringify("AllReady", False)));
 	
 	// Shutdown the poles during warmup
@@ -1019,7 +1032,7 @@ Void WarmUp2() {
 	UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing;
 	UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::Silence;
 	UIManager.UIAll.BigMessageSoundVariant = 0;
-	UIManager.UIAll.StatusMessage = _("Press F6 once you're ready.");
+	//UIManager.UIAll.StatusMessage = _("Press F6 once you're ready.");
 	if (G_Override_NeedWarmUp) UIManager.UIAll.BigMessage = TextLib::Compose("$f90%1", _("Pause"));
 	else UIManager.UIAll.BigMessage = TextLib::Compose("$f90%1", _("Warm-up"));
 	PlaySound(CUIConfig::EUISound::PhaseChange, 0);
@@ -1357,7 +1370,7 @@ MText = """
 <frame id="Complete" posn="0 0 0" scale="1.25" >
  <label {{{C}}} posn="0 25 5" scale="2" id="TextToComplete2" text="{{{G_ModeName}}}" />
  <quad {{{C}}} posn="0 20 5" sizen="50 1" style="Bgs1" substyle="BgColorContour" />
- <label {{{C}}} sizen="145" posn="0 10 5" id="TextToComplete" text="{{{C_Example}}}" />
+ <label {{{C}}} sizen="130" posn="0 10 5" id="TextToComplete" text="{{{C_Example}}}" />
 </frame>
 
 <frame id="Bottom_Section" posn="0 -50 5">
@@ -1419,4 +1432,186 @@ Void ModifyTextSpawnScreen(Text _Input) {
 	NameToWrite = G_ModeName;
 	Layers::Update("SpawnScreen_Text", SpawnScreen());
 	Layers::Attach("SpawnScreen_Text");
+}
+
+/*
+ * From -Old Champion- script.
+ */
+
+Text CreateLayerInfo() {
+  declare ImgPath = "file://Media/Manialinks/Shootmania/Common/";
+  declare ImgPathElite = "https://github.com/maniaplanet/game-modes/raw/master/TitlePack/Media/Manialinks/ShootMania/Elite/";
+  declare ImgCheck = ImgPath^"CheckpointsLeft.dds";
+  declare ImgArmor = ImgPath^"AttackerShieldLeft.dds";
+  declare CheckpointHidden = 1;
+  declare G_CheckpointsNb = 0;
+  declare RocketIMG = "";
+  declare LaserIMG = "";
+
+  RocketIMG = """ style="Icons64x64_2" substyle="RocketHit" """;
+  LaserIMG = """ style="Icons64x64_2" substyle="LaserHit" """;
+
+
+  if (G_CheckpointsNb > 0) CheckpointHidden = 0;
+
+  return """
+<manialink version="1" name="Elite:Info">
+<frame id="Frame_Playing">
+  <frame class="LibCustomUI_Module" id="Elite_GaugeCapture">
+    <frame posn="0 -40 64" hidden="1" id="Frame_Capture">
+      <label posn="0 6" halign="center" textsize="5" textemboss="1" text="100%" id="Label_Capture" />
+      <gauge posn="0 0 1" sizen="140 8" halign="center" style="EnergyBar" drawbg="1" drawblockbg="1" id="Gauge_Capture" />
+<quad posn="0 0" sizen="140 8" halign="center" style="Bgs1InRace" substyle="BgButtonShadow" />
+<quad posn="-1 -8 -1" sizen="43 22" halign="center" rot="180" style="UiSMSpectatorScoreBig" substyle="CenterShieldSmall" />
+<quad posn="-15 20" sizen="8 8" {{{RocketIMG}}}  id="c1"  />
+<quad posn="5 20" sizen="8 8" {{{LaserIMG}}}  id="c2"  />
+    </frame>
+  </frame>
+</frame>
+<script><!--
+#Include "MathLib" as ML
+
+#Const C_SponsorTime 5000
+
+declare CMlFrame Frame_Sponsors;
+
+Void UpdateSponsorsVisibility() {
+  declare netread Text Net_Elite_AtkLogin for Teams[0];
+  
+  if (
+    IsSpectatorMode
+    && GUIPlayer != Null 
+    && Net_Elite_AtkLogin != "" 
+    && GUIPlayer.Login == Net_Elite_AtkLogin
+  ) {
+    Frame_Sponsors.Show();
+  } else {
+    Frame_Sponsors.Hide();
+  }
+}
+
+Void UpdateSponsorImage(Integer _Key) {
+  declare Quad_Sponsor <=> (Page.GetFirstChild("Quad_Sponsor") as CMlQuad);
+  declare netread Text[] Net_Elite_AtkSponsors for Teams[0];
+  
+  if (!Net_Elite_AtkSponsors.existskey(_Key)) return;
+  
+  declare Url = Net_Elite_AtkSponsors[_Key];
+  if (Http.IsValidUrl(Url)) Quad_Sponsor.ChangeImageUrl(Url);
+}
+
+main() {
+  declare Frame_Playing   <=> (Page.GetFirstChild("Frame_Playing")    as CMlFrame);
+  declare Label_Checkpoints <=> (Page.GetFirstChild("Label_Checkpoints")  as CMlLabel);
+  declare Frame_Capture     <=> (Page.GetFirstChild("Frame_Capture")    as CMlFrame);
+  declare Label_Capture     <=> (Page.GetFirstChild("Label_Capture")    as CMlLabel);
+  declare Gauge_Capture     <=> (Page.GetFirstChild("Gauge_Capture")    as CMlGauge);
+  declare Frame_AtkArmor    <=> (Page.GetFirstChild("Frame_AtkArmor")   as CMlFrame);
+  declare Label_ArmorsLeft  <=> (Page.GetFirstChild("Label_ArmorsLeft")   as CMlLabel);
+  declare c1  <=> (Page.GetFirstChild("c1")   as CMlQuad);
+  declare c2  <=> (Page.GetFirstChild("c2")   as CMlQuad);
+  
+  Frame_Sponsors <=> (Page.GetFirstChild("Frame_Sponsors") as CMlFrame);
+  
+  declare netread Integer Net_Elite_CheckpointsCaptured for Teams[0];
+  declare netread Text Net_Elite_AtkLogin for Teams[0];
+  declare netread Text[] Net_Elite_AtkSponsors for Teams[0];
+  declare netread Integer Net_Elite_AtkArmorsLeft for Teams[0];
+  declare netread Boolean[Integer] Net_Players for Teams[0] = [1 => False, 2 => False];
+  
+  declare PrevUISequence = CUIConfig::EUISequence::Playing;
+  declare PrevCheckpointsCaptured = 0;
+  declare PrevGUIPlayerId = NullId;
+  declare PrevIsSpectatorMode = False;
+  declare PrevAtkArmorsLeft = -1;
+  
+  declare SponsorKey = 0;
+  declare NextSponsorTime = 0;
+  
+  while (True) {
+
+    yield;
+
+        if (Net_Players[2]) { c2.Opacity = 1.; c2.Scale = 1.3; }
+if (Net_Players[1]) { c1.Opacity = 1.; c1.Scale = 1.3; }
+if (!Net_Players[2]) { c2.Opacity = 0.2; c2.Scale = 0.9; }
+if (!Net_Players[1]) { c1.Opacity = 0.2; c1.Scale = 0.9; }
+
+
+
+    if (InputPlayer == Null) continue;
+    if (!PageIsVisible) continue;
+    
+    if (PrevUISequence != UI.UISequence) {
+      PrevUISequence = UI.UISequence;
+      
+      if (UI.UISequence == CUIConfig::EUISequence::Playing || UI.UISequence == CUIConfig::EUISequence::UIInteraction) {
+        Frame_Playing.Show();
+      } else {
+        Frame_Playing.Hide();
+      }
+    }
+
+    
+    declare CSmPlayer TargetPlayer;
+    if (GUIPlayer != Null) TargetPlayer <=> GUIPlayer;
+    else TargetPlayer <=> InputPlayer;
+    
+    if (IsSpectatorMode) {
+      declare MaxValueReal = 0.;
+      declare Clan = 0;
+      foreach (LandmarkGauge in MapLandmarks_Gauge) {
+        if (LandmarkGauge.Tag == "Checkpoint" || LandmarkGauge.Gauge.Speed <= 0) continue;
+        if (LandmarkGauge.Gauge.ValueReal > MaxValueReal) {
+          MaxValueReal = LandmarkGauge.Gauge.ValueReal;
+          Clan = LandmarkGauge.Gauge.Clan;
+        }
+      }
+      if (MaxValueReal > 0.) {
+        if (!Frame_Capture.Visible) Frame_Capture.Visible = True;
+        Gauge_Capture.Ratio = MaxValueReal;
+        Gauge_Capture.Clan = Clan;
+        Label_Capture.Value = ML::FloorInteger(MaxValueReal * 100.)^"%";
+      } else if (Frame_Capture.Visible) {
+        Frame_Capture.Visible = False;
+      }
+    } else {
+      if (
+        TargetPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::Spawned
+        && TargetPlayer.CapturedLandmark != Null 
+        && TargetPlayer.CapturedLandmark.Tag != "Checkpoint"
+        //&& TargetPlayer.CapturedLandmark.Gauge != Null
+        // && TargetPlayer.CapturedLandmark.Gauge.Speed > 0 
+        && TargetPlayer.CapturedLandmark.Sector.PlayersIds.count > 0
+      ) {
+        if (!Frame_Capture.Visible) Frame_Capture.Visible = True;
+        Gauge_Capture.Ratio = TargetPlayer.CapturedLandmark.Gauge.ValueReal;
+        Gauge_Capture.Clan = TargetPlayer.CapturedLandmark.Gauge.Clan;
+        Label_Capture.Value = ML::FloorInteger(TargetPlayer.CapturedLandmark.Gauge.ValueReal * 100.)^"%";
+
+
+foreach(PlayerId in TargetPlayer.CapturedLandmark.Sector.PlayersIds) {  
+        declare Player <=> Players[PlayerId]; 
+/*
+        if (TargetPlayer.CapturedLandmark.Sector.PlayersIds.count > 0 && Net_RocketPlayer && Player.CurrentClan == TargetPlayer.CapturedLandmark.Gauge.Clan)
+{
+c1.Opacity = 1.;
+c2.Opacity = 0.2;
+}
+        if (TargetPlayer.CapturedLandmark.Sector.PlayersIds.count > 0 && Net_LaserPlayer && Player.CurrentClan == TargetPlayer.CapturedLandmark.Gauge.Clan)
+{
+c1.Opacity = 1.;
+c2.Opacity = 1.;
+} */
+}
+    
+      } else if (Frame_Capture.Visible) {
+        Frame_Capture.Visible = False;
+      }
+    }
+  }
+}
+--></script>
+</manialink>
+""";
 }
