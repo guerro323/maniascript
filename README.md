@@ -1,4 +1,7 @@
 # maniascript
+
+THESE SCRIPTS ARE OLD. REALLY OLD.
+
 *CHAMPIONS* - " A Semi-Cooperation gamemode."
 
 *GE-Strategic* ( The Old Gameplay ) - " There are no ways to hide. "
