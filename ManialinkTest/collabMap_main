@@ -1,0 +1,13 @@
+<manialink version="2">
+  
+  <script><!--
+    main()
+    {
+      UI.MarkersXML = """<marker pos="0 0 0" manialinkframeid="Test" />""";
+      while(True)
+      {
+        yield;
+      }
+    }
+  --></script>
+</manialink>
