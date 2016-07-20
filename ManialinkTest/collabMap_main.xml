@@ -3,7 +3,7 @@
   <script><!--
     main()
     {
-      UI.MarkersXML = """<marker pos="0 0 0" manialinkframeid="Test" /><marker pos="0 10 0" label="test"/>""";
+      ClientUI.MarkersXML = """<marker pos="0 0 0" manialinkframeid="Test" /><marker pos="0 10 0" label="test"/>""";
       while(True)
       {
         yield;
