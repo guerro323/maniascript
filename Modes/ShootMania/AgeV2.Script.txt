@@ -1,0 +1,2107 @@
+
+
+/*
+ *	Mode melee
+ */
+
+#Extends "Modes/ShootMania/Base/ModeShootmania.Script.txt"
+
+#Include "MathLib" as MathLib
+#Include "TextLib" as TextLib
+#Include "Libs/Nadeo/ShootMania/SM.Script.txt" as SM
+#Include "Libs/Nadeo/Layers2.Script.txt" as Layers
+#Include "Libs/Nadeo/MiniMap2.Script.txt" as MiniMap
+#Include "Libs/Nadeo/Message.Script.txt" as Message
+#Include "Libs/Nadeo/ShootMania/Score.Script.txt" as Score
+#Include "Libs/Stormium/SpawnScreen.Script.txt" as StormiumSS
+#Include "Libs/Stormium/Interface.Script.txt" as StormiumIT
+#Include "Libs/Nadeo/ScoresTable2.Script.txt" as ST2
+#Include "Libs/Stormium/Kits.Script.txt" as Kits
+
+#Const	CompatibleMapTypes	"TeamDeathmatchArena, AgeArena"
+#Const	Version				"2014-07-25"
+#Const	ScriptName			"Melee.Script.txt"
+
+#Const m_MiniMapSize <60., 60.>
+#Const m_MiniMapPos <92., 0., 0.>
+
+#Const EGameState_Starting 	0
+#Const EGameState_InPlay 	1
+
+#Setting S_TimeToCaptureCheckpoint 60 as _("Time to capture a checkpoint (s)")
+#Setting S_MultiPlayerFasterCap True as _("Allow faster capture")
+#Setting S_EndTime				5	as _("Time to finish a round (minute)")
+#Setting S_RushTime				60	as _("Time to rush the goal (s)")
+#Setting S_GainTimePerNewRange 	30 as _("Gain time per new range")
+#Setting S_GainTimeOnCapture			20 as _("Gain time per capture")
+#Setting S_RushTimeGateDuration	15000 as _("Waiting time to wait for gates to open")
+#Setting S_TimeSelectionTime			15 as _("Time to wait before match start")
+#Setting S_RequiredPlayers				2
+#Setting S_MaxRounds 4
+#Setting S_BotBlue	0
+#Setting S_BotRed		0
+
+/// <summary>
+/// Current Attacking clan.
+/// </summary>
+/// <remarks>The color are still Blue for atk, and Red for def</remarks>
+declare Integer AttackingClan;
+/// <summary>
+/// Spawns for all players.
+/// usage: *[Team][Order]
+/// </summary>
+declare CSmMapLandmark[][Integer][Text] PlayerSpawns;
+declare CSmMapLandmark[Integer] Goals;
+declare CSmMapLandmark[][Integer] Gates;
+declare CSmMapLandmark[][Integer] Checkpoints;
+declare CSmObject[] MapCannons;
+declare Integer CurrentGameState;
+declare Integer CurrentOrder;
+declare Boolean[Integer] RangeCaptured;
+declare Boolean get_IsFinalGoal;
+declare CSmMapLandmark lastGate;
+declare Integer RoundWinner;
+declare Integer LastRoundWinner;
+declare Integer MapWinner;
+declare Boolean IsOvertime;
+declare Boolean IsRangedMap;
+declare Integer MatchStartTime;
+declare Integer OvertimeEndTime;
+declare Integer[Integer] RangedProgression;
+declare Integer LastTimeBalance;
+
+***Match_StartServer***
+***
+	AttackingClan = MathLib::Rand(1, 2);
+	
+	Layers::Create("CGame.SpawnInterface", layer_GetSpawnInterface());
+	Layers::Create("CGame.GateMarkers", layer_GetGateMarkers());
+	Layers::Create("CGame.GoalMarkers", layer_GetGoalMarkers());
+	Layers::Create("CGame.Overtime", layer_GetOvertime());
+	
+	Layers::SetType("CGame.GateMarkers", CUILayer::EUILayerType::Markers);
+	Layers::SetType("CGame.GoalMarkers", CUILayer::EUILayerType::Markers);
+	
+	ST2::Load();
+	ST2::SetStyle("LibST_SMBaseTeams");
+	ST2::SetStyle("LibST_SMBasePoints");
+	ST2::Build("SM");
+	
+	UseMinimap = True;
+	ForceNavMapsComputation = True;
+	UseClans = True;
+	
+	declare netwrite NetSrv_Handle for Teams[0] = ["" => -1];
+	declare netwrite NetSrv_Message for Teams[0] = ["" => ""];
+	
+	UIManager.UIAll.NoticesFilter_HideMapInfo = True;
+	UIManager.UIAll.NoticesFilter_LevelToShowAsBigMessage = CUIConfig::ENoticeLevel::MatchInfo;
+	
+	StormiumSS::SetName("AgE");
+	StormiumSS::SetGoal("""Attackers must capture the 2 Checkpoints (STORMIUM Containers) UNDER 5 MINUTES.
+If they succed, they win 1 points. If they don't, Defenders win 1 point.
+If they succed they will have to rush to the goal UNDER 30 SECONDS to get a SECOND POINT.
+The team with a number of 6 points win.""");
+	StormiumSS::SetDescription("""► In attack or defense, you can choose among 5 kits ! 
+You have a main weapon + other weapons/actions.
+
+► In each game, 2 players are selected randomly to be the $0dd❄King of Cryo$fff (in Attackers team),
+and the $e80🔥 King of Meteor$fff (in Defenders team).
+They have a great power thanks to STORMIUM ! 
+They have 300HP and mass destruction weapons !""");
+	StormiumSS::SetScoreManialink(GetScoreManialink());
+	StormiumIT::Load(StormiumIT::C_ModeAgE);
+	StormiumIT::ShowCustomCoutdown(True);
+	StormiumIT::ShowCustomScores(True);
+	StormiumIT::ShowCustomMarkers(True);
+	StormiumIT::SetActive(True);
+	
+	UIManager.UIAll.TeamLabelsShowNames = CUIConfig::EVisibility::ForcedHidden;
+	UIManager.UIAll.OpposingTeamLabelsShowNames = CUIConfig::EVisibility::ForcedHidden;
+***
+
+***MB_Private_Settings***
+***
+	MB_Settings_UseDefaultTimer = False;
+	MB_Settings_UseDefaultClansScoresUI = False;
+	MB_Settings_UseDefaultSpawnScreen = False;
+	MB_Settings_UseDefaultPodiumSequence = False;
+	MB_Settings_UseDefaultHud = False;
+***
+
+***Match_StartMap***
+***
+	Message::CleanAllMessages();
+	UIManager.UIAll.BigMessage = "";
+	UIManager.UIAll.StatusMessage = "";
+
+	ST2::ClearScores();
+	ClearScores();
+	
+	RangedProgression[1] = 0;
+	RangedProgression[2] = 0;
+	
+	declare netwrite Net_MatchIsRunning for Teams[0] = False;
+	Net_MatchIsRunning = False;
+	
+	LastRoundWinner = 0;
+
+	PlayerSpawns = CSmMapLandmark[][Integer][Text];
+	Goals = CSmMapLandmark[Integer];
+	Gates = CSmMapLandmark[][Integer];
+	Checkpoints = CSmMapLandmark[][Integer];
+
+	UIManager.UIAll.MarkersXML = "";
+	foreach (mlm in MapLandmarks)
+	{
+		if (mlm.PlayerSpawn != Null)
+			AddLandmark(mlm.PlayerSpawn, mlm);
+		if (mlm.Gauge != Null)
+			AddLandmark(mlm.Gauge, mlm);
+	}
+	
+	IsRangedMap = Checkpoints.count > 1;
+		
+	lastGate = CSmMapLandmark;
+	declare lastOrder = 0;
+	foreach (gate in MapLandmarks_Gauge)
+	{
+		if (gate.Tag == "Gate" && gate.Order > lastOrder)
+		{
+			lastOrder = gate.Order;
+			lastGate <=> gate;
+		}
+	}
+
+	
+	CurrentGameState = EGameState_Starting;
+	
+	UpdateColors();
+	
+	Layers::Update("CGame.SpawnInterface", layer_GetSpawnInterface());
+	
+	StartTime = Now;
+	
+	UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing;
+	
+	BalanceTeams();
+	
+	Message::SetDefaultStatusMessage("");
+	
+	CurrentGameState = EGameState_InPlay;
+	
+	UpdateColors();
+	StormiumSS::Reload();
+	StormiumIT::SetGoalCount(Checkpoints[0].count);
+	
+	RefreshCheckpointsInterfaceVariables();
+	
+	UIManager.UIAll.TeamLabelsShowNames = CUIConfig::EVisibility::ForcedHidden;
+	UIManager.UIAll.OpposingTeamLabelsShowNames = CUIConfig::EVisibility::ForcedHidden;
+	
+	if (IsRangedMap)
+	{
+		UIManager.UIAll.BigMessage = "Multiple gates ranges warning!";
+		UIManager.UIAll.StatusMessage = "The first team who win the attack wins the map!";
+		
+		MB_Sleep(5000);
+	}
+***
+
+***Match_StartRound***
+***
+	if (MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2)) > 1)
+	{
+		BalanceTeams();
+	}
+
+	UIManager.UIAll.TeamLabelsVisibility = CUIConfig::ELabelsVisibility::Never ;
+	UIManager.UIAll.OpposingTeamLabelsVisibility = CUIConfig::ELabelsVisibility::Never ;
+
+	OvertimeEndTime = -1;
+
+	declare netwrite Net_MatchIsRunning for Teams[0] = False;
+	Net_MatchIsRunning = False;
+
+	declare netwrite Net_IsFinalGoal for Teams[0] = False;
+	Net_IsFinalGoal = False;
+	
+	UIManager.UIAll.BigMessage = "";
+	UIManager.UIAll.StatusMessage = "";
+	Message::SetDefaultStatusMessage("");
+	
+	RangeCaptured = Boolean[Integer];
+
+	CurrentOrder = 0;
+	declare i = 0;
+	foreach (n in Checkpoints)
+	{
+		i += 1;
+		RangeCaptured[i - 1] = False;
+		
+		foreach (cp in n)
+			cp.Gauge.Speed = -1;
+	}
+	
+	AttackingClan = 3 - AttackingClan;
+	declare netwrite Net_AttackingClan for Teams[0] = AttackingClan;
+	Net_AttackingClan = AttackingClan;
+	
+	foreach (player in Players)
+	{
+		SendSrvMessage(player.Login, "GoRespawnScreen");
+		SendSrvMessage(player.Login, "SetPlayerClan");
+	}
+	
+	CurrentGameState = EGameState_Starting;
+	UpdateColors();
+	
+	if (IsRangedMap)
+		CurrentOrder = RangedProgression[AttackingClan];
+	
+	CurrentGameState = EGameState_InPlay;
+	UpdateColors();
+	UpdateGates();
+	
+	StormiumIT::SetGoalCount(Checkpoints[0].count);
+	RefreshCheckpointsInterfaceVariables();
+	
+	RoundWinner = 0;
+	MapWinner = 0;
+	
+	EndTime = -1;
+	
+	IsOvertime = False;
+	
+	StormiumIT::SetGoalCount(Checkpoints[0].count);
+	
+	while(Players.count < S_RequiredPlayers)
+	{
+		yield;
+		UIManager.UIAll.StatusMessage = "Required Players: " ^ S_RequiredPlayers ^ " | Current Players count: " ^ Players.count;
+		UIManager.UIAll.BigMessage = "Waiting for players...";
+	}
+	
+	Net_MatchIsRunning = True;
+	
+	UIManager.UIAll.StatusMessage = "";
+	UIManager.UIAll.BigMessage = "";
+	
+	EndTime = Now + (S_EndTime * 60000) + (S_TimeSelectionTime * 1000);
+	MatchStartTime = Now + (S_TimeSelectionTime * 1000);
+	
+	foreach (player in Players)
+		SendSrvMessage(player.Login, "GoRespawnScreen");
+
+	if (MB_Private_SectionCount_Round < S_MaxRounds)
+		Message::SendBigMessage("New round.", 3000, 10);
+	else
+		Message::SendBigMessage("Last round!", 6000, 10);
+		
+	if (IsRangedMap)
+	{		
+		if (CurrentOrder >= Checkpoints.count)
+		{
+			declare netwrite Net_IsFinalGoal for Teams[0] = True;
+			Net_IsFinalGoal = True;
+			
+			Message::SetDefaultStatusMessage("Rush time!");
+			EndTime = (Now + (S_RushTime * 1000)) + S_RushTimeGateDuration;
+			UIManager.UIAll.CountdownEndTime = Now + S_RushTimeGateDuration;
+			
+			Message::SendStatusMessage(Teams[AttackingClan - 1].ColorizedName ^ " will start at rush time!", 4000, 10);
+		}
+		else
+			Message::SendStatusMessage(Teams[AttackingClan - 1].ColorizedName ^ " will start at range #" ^ CurrentOrder, 4000, 10);
+	}
+***
+
+***OnNewPlayer***
+***
+	declare respawnTime for Player = Now;
+	SetPlayerClan(Player, GetTeam());
+	declare PlayerClan for Player = Player.CurrentClan;
+	PlayerClan = Player.CurrentClan;
+	
+	SendSrvMessage(Player.Login, "GoRespawnScreen");
+	SendSrvMessage(player.Login, "SetPlayerClan", PlayerClan);
+***
+
+***Match_Yield***
+***
+	Users_SetNbFakeUsers(S_BotBlue, S_BotRed);
+
+	Message::Loop();
+	StormiumSS::Loop();
+	StormiumIT::Loop();
+	
+	Layers::Attach("CGame.GateMarkers");
+	Layers::Attach("CGame.GoalMarkers");
+	Layers::Attach("CGame.Overtime");
+	Layers::Attach("CGame.SpawnInterface");
+***
+
+***Match_PlayLoop***
+***	
+	declare netwrite Net_MatchStartTime for Teams[0] = 0;
+	Net_MatchStartTime = MatchStartTime;
+
+	/*if (LastTimeBalance + 3000 < Now && MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2)) > 1)
+	{
+		BalanceTeams();
+	}*/
+
+	foreach (e in PendingEvents)
+	{
+		if (e.Type == CSmModeEvent::EType::OnPlayerRequestRespawn)
+			PassOn(e);
+		if (e.Type == CSmModeEvent::EType::OnCapture)
+		{
+			PassOn(e);
+		}
+		if (e.Type == CSmModeEvent::EType::OnHit)
+		{
+			if (e.Victim != Null && e.Victim != e.Shooter)
+				PassOn(e);
+		}
+		if (e.Type == CSmModeEvent::EType::OnActionEvent)
+		{
+			+++OnActionEvent+++
+			Kits::OnActionEvent(e);
+		}
+		if (e.Type == CSmModeEvent::EType::OnActionCustomEvent) 
+		{
+			+++OnActionCustomEvent+++
+		}
+	}
+
+	foreach (player in Players)
+	{
+		player.Stamina += 1;
+	
+		if (player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned)
+		{	
+			declare PlayerClan for player = player.RequestedClan;
+			if (LastTimeBalance + 20000 < Now)
+			{
+				PlayerClan = player.RequestedClan;
+			}
+			/*if (MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2)) <= 2)
+				PlayerClan = player.RequestedClan;
+			if (PlayerClan == 0)
+				PlayerClan = GetTeam();
+				
+			if (MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2)) >= 2)
+				PlayerClan = GetTeam();
+			
+				
+			declare oldPlayerClan = player.CurrentClan;
+			
+			if (oldPlayerClan != PlayerClan)
+			{
+				declare UI <=> UIManager.GetUI(player);
+				if (UI != Null)
+				{
+					UI.SendChat("$999Team notice: $fffYou was redirected to " ^ Teams[PlayerClan - 1].ColorizedName ^ " team"); 
+				}
+			}*/
+				
+			SetPlayerClan(player, PlayerClan);
+			
+			declare UI <=> UIManager.GetUI(player);
+			declare netread Net_playerWantRespawn for UI = False;
+			declare netread Net_playerSyncTime for UI = 0;
+			declare netread Net_playerLastTime for UI = 0;
+			declare netread Net_playerSpawn for UI = 0;
+			declare netread Net_playerSpawnOrder for UI = 0;
+			declare netread Net_playerWantedKit for UI = "soldier";
+			
+			declare lastTime for player = 0;
+			declare netwrite Net_playerMayChooseThisKit for player = "";
+			Net_playerMayChooseThisKit = Net_playerWantedKit;
+			
+			if ((Net_playerWantRespawn
+			|| player.User.IsFakeUser)
+			&& MatchStartTime < Now)
+			{			
+				declare CSmMapLandmark spawn;
+				if (MapLandmarks_PlayerSpawn.existskey(Net_playerSpawn))
+					spawn <=> MapLandmarks_PlayerSpawn[Net_playerSpawn];
+			
+				if (get_IsFinalGoal && player.CurrentClan == 3 - AttackingClan)
+				{
+					spawn <=> PlayerSpawns["SpawnGoal"][0][0];
+				}
+			
+				if (spawn != Null && (IsValidSpawn(spawn, player) || player.User.IsFakeUser))
+				{
+					player.ArmorMax = 10000;
+					player.Armor = player.ArmorMax;
+					
+					SendSrvMessage(player.Login, "GoRespawnScreen");
+					
+					Kits::SetKit(player, Net_playerWantedKit);
+					
+					declare respawnTime for player = Now;
+					SM::SpawnPlayer(player, player.CurrentClan, player.Armor, spawn.PlayerSpawn, Now);
+					
+					/*if (player.User.IsFakeUser)
+						player.Armor = 100;*/
+				}
+			}
+		} 
+		/*else
+			Layers::Detach("CGame.SpawnInterface", player);*/
+	}
+	
+	declare nbOfCheckpointsCaptured = 0;
+	foreach (clanOrder => order in Checkpoints)
+	{
+		// Choose the right checkpoint
+		if (clanOrder == CurrentOrder)
+			foreach (checkpoint in order)
+			{
+				if (checkpoint.Gauge.Captured 
+					|| checkpoint.Gauge.Value == checkpoint.Gauge.Max)
+				{
+					if (!checkpoint.Gauge.Captured)
+						checkpoint.Gauge.Captured = True;
+				
+					nbOfCheckpointsCaptured += 1;
+				}
+			
+				declare CSmPlayer[] players;
+				if (checkpoint.Sector != Null)
+					if (checkpoint.Sector.PlayersIds.count > 0)
+					{
+						foreach (id in checkpoint.Sector.PlayersIds)
+						{
+							if (Players.existskey(id))
+							players.add(Players[id]);
+						}
+					}
+					else
+						checkpoint.Gauge.Speed = 0;
+						
+			
+				checkpoint.Gauge.Speed = SpeedValue(checkpoint.Gauge, players);
+				if (checkpoint.Gauge.Speed > 0)
+				{
+					if (IsOvertime)
+					{
+						UIManager.UIAll.CountdownEndTime = Now + 60000;
+						OvertimeEndTime = Now + 5000;
+					}
+				}
+				
+				declare lastUIUpdateTime for This = 0;
+				if (lastUIUpdateTime + 250 < Now)
+				{
+					lastUIUpdateTime = Now;
+					RefreshCheckpointsInterfaceVariables();
+				}
+			}
+	}
+	foreach (I => goal in Goals)
+	{
+		if (UIManager.UIAll.CountdownEndTime == -1 && get_IsFinalGoal)
+		{
+			if ((goal.Gauge.Value == 0)
+				&& goal.Gauge.Speed == -1)
+			{
+				goal.Gauge.Speed = 1;
+				MB_Yield();
+			
+				goal.Gauge.Clan = AttackingClan;
+				goal.Base.Clan = AttackingClan;
+			}
+			
+			if (goal.Gauge.Value == goal.Gauge.Max
+				&& goal.Gauge.Speed == 1)
+			{
+				if (!goal.Gauge.Captured)
+					goal.Gauge.Captured = True;
+			}
+		
+			declare atkClanPresent = False;
+			declare defClanPresent = False;
+			declare lastDefClanStayTime for This = -1;
+			foreach (playerId in goal.Sector.PlayersIds)
+			{
+				if (Players.existskey(playerId))
+				{
+					declare player <=> Players[playerId];
+					if (player.CurrentClan == AttackingClan)
+						atkClanPresent = True;
+					else
+					{
+						defClanPresent = True;
+						lastDefClanStayTime = Now;
+					}
+				}
+			}
+			
+			if (atkClanPresent && lastDefClanStayTime + 250 < Now && goal.Gauge.Speed == 0)
+			{
+				foreach (player in Players)
+					player.SpeedPower = 0.1;
+				Message::SendBigMessage("Victory for " ^ Teams[AttackingClan - 1].ColorizedName ^ "!", 6000, 10);
+				
+				PlaySound(CUIConfig::EUISound::VictoryPoint, 0);
+				
+				RoundWinner = AttackingClan;
+				goal.Gauge.Speed = -1;
+				goal.Gauge.Value -= 1;
+				MB_Yield();
+				
+				EndTime = Now + 2500;
+			}
+		}
+	}
+	
+	declare lastNbOfCheckpointsCaptured for This = 0;
+	if (nbOfCheckpointsCaptured != lastNbOfCheckpointsCaptured)
+	{
+		if (nbOfCheckpointsCaptured > lastNbOfCheckpointsCaptured)
+		{
+			OvertimeEndTime = -1;
+			UIManager.UIAll.CountdownEndTime = -1;
+		
+			Message::SendStatusMessage("Checkpoints " ^ nbOfCheckpointsCaptured ^ "/" ^ Checkpoints[CurrentOrder].count ^ " captured", 4000, 5);
+			Message::SendBigMessage("Checkpoint captured!", 4000, 5);
+			
+			PlaySound(CUIConfig::EUISound::Capture, 1);
+			
+			RefreshCheckpointsInterfaceVariables();
+			
+			IsOvertime = False;
+			
+			if (EndTime == -1)
+				EndTime = Now;
+			
+			EndTime += S_GainTimeOnCapture * 1000;
+		}
+	
+		lastNbOfCheckpointsCaptured = nbOfCheckpointsCaptured;
+	}
+	
+	if (UIManager.UIAll.CountdownEndTime < Now
+	&& UIManager.UIAll.CountdownEndTime != -1)
+	{
+		UIManager.UIAll.CountdownEndTime = -1;
+		OvertimeEndTime = -1;
+		Message::SendBigMessage("Goal Gates are open!", 4000, 10);
+		
+		foreach (order in Gates)
+		{
+			foreach (gate in order)
+			{
+				gate.Gate.ManualClosed = False;
+				
+				gate.Gauge.Value = 0;
+				gate.Gauge.Max = 0;
+			}
+		}
+	}
+	
+	if (!get_IsFinalGoal && RangeCaptured.existskey(CurrentOrder) && Checkpoints.existskey(CurrentOrder) && nbOfCheckpointsCaptured == Checkpoints[CurrentOrder].count
+		&& !RangeCaptured[CurrentOrder])
+	{
+		UIManager.UIAll.CountdownEndTime = -1;
+		OvertimeEndTime = -1;
+	
+		RangeCaptured[CurrentOrder] = True;
+		Message::SendBigMessage(TextLib::Compose("$<%1$> captured the gate!", Teams[AttackingClan - 1].ColorizedName), 6000, 10);
+		Message::SendStatusMessage("Range #"^ CurrentOrder ^" captured!", 6000, 10);
+		
+		PlaySound(CUIConfig::EUISound::ScoreProgress, 1);
+		
+		RefreshCheckpointsInterfaceVariables();
+		
+		CurrentOrder += 1;
+		
+		RangedProgression[AttackingClan] = CurrentOrder;
+		
+		if (CurrentOrder >= Checkpoints.count)
+		{		
+			declare netwrite Net_IsFinalGoal for Teams[0] = True;
+			Net_IsFinalGoal = True;
+			
+			Message::SetDefaultStatusMessage("Rush time!");
+			EndTime = (Now + (S_RushTime * 1000)) + S_RushTimeGateDuration;
+			UIManager.UIAll.CountdownEndTime = Now + S_RushTimeGateDuration;
+			
+			foreach (player in Players)
+			{
+				if (player.CurrentClan == 3 - AttackingClan)
+				{
+					SendSrvMessage(player.Login, "GoRespawnScreen");
+					UnspawnPlayer(player);
+					
+					declare respawnTime for player = Now;
+					respawnTime = Now;
+				}
+			}
+		}
+		else
+		{
+			EndTime += S_GainTimePerNewRange * 1000;
+			
+			declare netwrite Net_IsFinalGoal for Teams[0] = False;
+			Net_IsFinalGoal = False;
+		}
+		
+		UpdateColors();
+		UpdateGates();
+	}
+	else if (get_IsFinalGoal)
+	{
+		StormiumIT::SetGoalCount(0);
+		if ((Now % 1000) == 0)
+		{
+			PlaySound(CUIConfig::EUISound::Custom4, 0);
+		}
+	}
+	
+	if (IsOvertime && (Now % 1000) == 0
+	&& OvertimeEndTime != Now + 5000)
+	{
+		PlaySound(CUIConfig::EUISound::Warning, 1);
+	}
+	
+	if ((EndTime < Now
+	&& EndTime != -1)
+	|| (OvertimeEndTime < Now
+	&& OvertimeEndTime != -1))
+	{
+		if (!IsOvertime && !get_IsFinalGoal)
+		{
+			IsOvertime = True;
+			OvertimeEndTime = Now + 5000;
+			EndTime = -1;
+			
+			PlaySound(CUIConfig::EUISound::TimeOut, 1);
+		}
+		else
+		{
+			MB_StopRound();
+			if (RoundWinner == 0)
+				RoundWinner = 3 - AttackingClan;
+		}
+	}
+	
+	UpdateGetVariables();
+***
+
+***Match_EndRound***
+***
+	UIManager.UIAll.CountdownEndTime = -1;
+	
+	if (RoundWinner != 0)
+	{
+		ClanScores[RoundWinner] += 1;
+	}
+
+	if (RoundWinner == AttackingClan)
+		MB_Sleep(2000);
+
+	EndTime = -1;
+
+	CurrentGameState = EGameState_Starting;
+	UpdateColors();
+	SM::UnspawnAllPlayers();
+	
+	declare netwrite Net_MatchIsRunning for Teams[0] = False;
+	Net_MatchIsRunning = False;
+	
+	MB_Sleep(3000);
+	
+	if (IsRangedMap && RoundWinner == AttackingClan)
+	{
+		LastRoundWinner = RoundWinner;		
+	}
+	
+	declare RoundFactor = 1;
+	if (IsRangedMap)
+		RoundFactor = 2;
+	
+	if (RoundWinner != 0 && (RoundWinner == LastRoundWinner || MB_Private_SectionCount_Round >= S_MaxRounds * RoundFactor))
+	{
+		if (MB_Private_SectionCount_Round >= S_MaxRounds && LastRoundWinner == 0)
+			LastRoundWinner = 3;
+	
+		MapWinner = LastRoundWinner;
+		MB_StopMap();
+	}
+	
+	LastRoundWinner = RoundWinner;
+***
+
+***Match_EndMap***
+***
+	if (MapWinner != 0)
+	{
+		if (MapWinner != 3)
+			UIManager.UIAll.BigMessage = """$<{{{Teams[MapWinner - 1].ColorizedName}}}$z$s$> wins the map!""";
+		else
+			UIManager.UIAll.BigMessage = _("Draw.");
+			
+		UIManager.UIAll.UISequence = CUIConfig::EUISequence::Podium;
+		
+		
+		MB_Sleep(6000);
+	}
+	else
+	{
+		UIManager.UIAll.BigMessage = "Changing map...";
+		MB_Sleep(1000);
+	}
+***
+
+Void UpdateGates()
+{
+	foreach (clanOrder => order in Gates)
+	{
+		foreach (gate in order)
+		{
+			if (gate.Order < CurrentOrder)
+			{
+				declare _gate <=> gate.Gate;
+				_gate.Automatic = False;
+				if (!get_IsFinalGoal && gate.Order + 1 == RangeCaptured.count)
+					_gate.ManualClosed = True;
+				else
+					_gate.ManualClosed = False;
+					
+				_gate.Clan = 0;
+		
+				declare gauge <=> gate.Gauge;
+				if (gate.Order + 1 == RangeCaptured.count)
+				{
+					gauge.Value = S_RushTimeGateDuration;
+					gauge.Max = S_RushTimeGateDuration;
+				}
+				else
+				{
+					gauge.Value = 0;
+					gauge.Max = 0;
+				}
+				gauge.Speed = -1;
+				gauge.Captured = False;
+				gauge.Clan = 0;			
+			}
+		}
+	}
+}
+
+Void PlaySound(CUIConfig::EUISound sound, Integer variant)
+{
+	UIManager.UIAll.SendNotice("", CUIConfig::ENoticeLevel::MatchInfo, Null, CUIConfig::EAvatarVariant::Default, sound, variant);
+}
+
+Void UpdateGetVariables()
+{
+
+	declare netwrite Net_IsFinalGoal for Teams[0] = False;
+	get_IsFinalGoal = RangeCaptured.count - 1 < CurrentOrder;
+	Net_IsFinalGoal = get_IsFinalGoal;
+	
+	declare netwrite Net_CurrentOrder for Teams[0] = 0;
+	Net_CurrentOrder = CurrentOrder;
+	
+	declare netwrite Net_IsOvertime for Teams[0] = False;
+	Net_IsOvertime = IsOvertime;
+	
+	declare netwrite Net_OvertimeEndTime for Teams[0] = 0;
+	Net_OvertimeEndTime = OvertimeEndTime;
+}
+
+Integer GetNbPlayers(Integer clan)
+{
+	declare count = 0;
+	foreach (player in Players)
+	{
+		declare PlayerClan for player = 0;
+		if (PlayerClan == clan)
+			count += 1;
+	}
+	return count;
+}
+
+Integer GetTeam()
+{
+	if (GetNbPlayers(1) > GetNbPlayers(2))
+		return 2;
+	else if (GetNbPlayers(2) > GetNbPlayers(1))
+		return 1;
+	return AttackingClan;
+}
+
+Void BalanceTeams()
+{
+	LastTimeBalance = Now; 
+	
+	UIManager.UIAll.SendChat("Teams are now balanced in term of size.");
+	foreach (player in Players)
+	{	
+		declare oldPlayerClan = player.CurrentClan;
+		declare PlayerClan for player = GetTeam();
+		PlayerClan = GetTeam();
+		//yield;
+		
+		if (oldPlayerClan != PlayerClan)
+		{
+			UnspawnPlayer(player);
+			declare UI <=> UIManager.GetUI(player);
+			if (UI != Null)
+			{
+				UI.SendChat("$999Team notice: $fffYou was redirected to " ^ Teams[PlayerClan - 1].ColorizedName ^ " team"); 
+			}
+		}
+	}
+}
+
+Boolean IsValidSpawn(CSmMapLandmark spawn, CSmPlayer player)
+{
+	declare isAvailable = True;
+
+	declare spawnClan for spawn = 0;
+	if (spawnClan != spawn.Base.Clan)
+		UIManager.UIAll.SendChat(spawnClan ^ " : " ^ spawn.Base.Clan);
+	if (spawnClan == player.CurrentClan)
+	{
+		isAvailable = True;
+	}
+	else
+		isAvailable = False;
+		
+	if (spawn.Tag == "SpawnGoal" && player.CurrentClan == AttackingClan)
+		isAvailable = False;
+	if (spawn.Tag == "SpawnAttack" && get_IsFinalGoal)
+		isAvailable = False;
+	if (spawn.Tag == "SpawnGoal" && player.CurrentClan == 3 - AttackingClan && !get_IsFinalGoal)
+		isAvailable = False;
+						
+	return isAvailable;
+}
+
+Integer SpeedValue(CSmMapGauge gauge, CSmPlayer[] players)
+{
+	declare value = 0;
+	foreach (player in players)
+	{
+		if (player.CurrentClan == AttackingClan)
+		{
+			declare netwrite Net_IsDisguise for player = False;
+			if (!Net_IsDisguise)
+				value += 1;
+		}
+		else value -= 1;
+	}
+	
+	if (value < 0)
+		value = 0;
+	if (value > 1 && !S_MultiPlayerFasterCap)
+		value = 1;
+	
+	return value;
+}
+
+Text MLPos(Vec3 pos)
+{
+	return """{{{pos[0]}}} {{{pos[1]}}} {{{pos[2]}}}""";
+}
+
+Text layer_GetSpawnInterface()
+{
+	declare CC = "halign='center' valign='center'";
+	declare ml_spawnFrame = """ """;
+	declare spawnCount = MapLandmarks_PlayerSpawn.count;
+	for (i, 0, 20)
+	{
+		ml_spawnFrame ^= """
+			<frameinstance posn="0 -{{{i*16}}} 0" modelid="fm_Spawn"		id="fi_Spawn({{{i}}})" />
+		""";
+	}
+	
+	return """
+	<manialink version="2">
+		<framemodel id="fm_Class">
+			<label {{{CC}}} posn="-22.5 0 2" id="Label_Icon" text=""/>
+			<quad posn="0 -8 1" id="Quad_Selected" style="BgRaceScore2" rot="-90" substyle="CartoucheLine" halign="left" valign="center" sizen="16 60" colorize="0f0"/>
+			<label textfont="Oswald" id="Label_SelectClass" scriptevents="1" posn="0 0 0" halign="center" valign="center" text="SOLDIER" sizen="60 15" textsize="4" />
+			<label textfont="RajdhaniMono" id="Label_KitCounter" posn="20 0 0" halign="center" valign="center" text="0" sizen="60 15" textsize="4" />
+		</framemodel>
+		<framemodel id="fm_Spawn">
+			<quad posn="0 -8 1" id="Quad_Selected" style="BgRaceScore2" rot="90" substyle="CartoucheLine" halign="right" valign="center" sizen="16 60" colorize="0f0"/>
+			<label textfont="Oswald" id="Label_SelectSpawn" scriptevents="1" posn="0 0 0" halign="center" valign="center" text="SPAWN #1" sizen="60 15" textsize="4" />
+		</framemodel>
+	<frame id="mainFrame">
+		<!--<frame hidden="1">
+			<minimap posn="0 0 1" halign="center" valign="center" sizen="75 75" id="Minimap_Main" />
+			<quad halign="center" valign="center" sizen="95 95" image="file://Media/Manialinks/Common/StationInfo/WindowBg.dds" />
+			<quad halign="center" valign="center" sizen="80 80" image="file://Media/Manialinks/Common/Minimap/MinimapOverlay2.dds" posn="0 0 2" />
+		</frame>-->
+		
+		<frame posn="0 0 0" id="Frame_AtkInfo">
+			<label id="Label_AtkInfo" {{{CC}}} text="You are attacking!" textprefix="$s" textfont="OswaldMono"/>
+		</frame>
+		
+		<frame posn="0 0 10" id="Clip_FrameKitInfo" clipsizen="180 80" clip="1" clipposn="0 0">
+			<frame posn="0 0" id="FrameKitInfo">
+				<label posn="-88 30" halign="left" valign="bottom" textfont="Oswald" textprefix="$t" id="Label_DescClassName" text="Soldier" textsize="8" />
+				<quad posn="-90 30" halign="left" valign="bottom" bgcolor="000" opacity="1" sizen="45 10" />
+				<quad halign="center" valign="center" bgcolor="000" opacity="0.8" posn="0 -5" sizen="180 70" />
+				<label halign="right" valign="center" posn="85 35 5" textprefix="$s " text="Press '1' to heal yourself" />	
+				
+				<frame posn="0 25.75 5" id="FrameDescShootButton" scale="0.95">
+					<label posn="-86 0 2" text=" SHOOT BUTTON" halign="left" valign="top" textfont="Oswald" />
+					<quad posn="-88 2 1" sizen="175 7.5" bgcolor="000" opacity="0.5" />
+					<quad posn="-88 2 0" sizen="175 15" bgcolor="000" opacity="0.25" />		
+					<label id="Label_DescriptionShoot" posn="-80 -7.5 0" textprefix="$s " text="MultiPlasma / MiniGun" />	
+				</frame>
+				<frame posn="0 8.5 5" id="FrameDescAction1Button" scale="0.95">
+					<label id="Label_Action1Button" posn="-86 0 2" text=" A   BUTTON" halign="left" valign="top" textfont="Oswald" />
+					<label posn="-84.5 -1.5 2" text=" " halign="center" valign="center" textfont="Oswald" textsize="5" />
+					<quad posn="-88 2 1" sizen="175 7.5" bgcolor="000" opacity="0.5" />
+					<quad posn="-88 2 0" sizen="175 15" bgcolor="000" opacity="0.25" />		
+					<label id="Label_DescriptionAction1" posn="-80 -7.5 0" textprefix="$s " text="Switch Weapon between MultiPlasma and MiniGun" />	
+				</frame>
+				<frame posn="0 -8.5 5" id="FrameDescAction2Button" scale="0.95">
+					<label posn="-86 0 2" text=" E   BUTTON" halign="left" valign="top" textfont="Oswald" />
+					<label posn="-84.5 -1.5 2" text=" " halign="center" valign="center" textfont="Oswald" textsize="5" />
+					<quad posn="-88 2 1" sizen="175 7.5" bgcolor="000" opacity="0.5" />
+					<quad posn="-88 2 0" sizen="175 15" bgcolor="000" opacity="0.25" />		
+					<label id="Label_DescriptionAction2" posn="-80 -7.5 0" textprefix="$s " text="Grenade" />	
+				</frame>
+				
+				<label id="Label_DescriptionWarning" posn="-84 -22" sizen="170" autonewline="1" halign="left" valign="top" textprefix="$f00" text=" MultiPlasma is very powerful with 4 amunitions !
+ MiniGun can explose if it is used too long !" textsize="2"/>
+
+			</frame>
+		</frame>
+		
+		<frame posn="0 70" id="FrameViewLogo">
+			<quad posn="0 -10.75" sizen="60 20" halign="center" valign="center" image="https://cdn.discordapp.com/attachments/244514503323025408/316925411625795587/AgeLogo.png" keepratio="Fit" />	
+			<quad posn="0 0 -59" halign="center" valign="center" bgcolor="555" opacity="0.5" sizen="360 40" />	
+		</frame>
+		
+		<frame posn="-130 25" scale="1" id="FrameViewSpawns">
+			<quad posn="0 -25 -60" style="Bgs1" substyle="BgEmpty" halign="center" valign="center" sizen="75 100" />
+			<label posn="0 -70 1" halign="center" valign="center" style="TextButtonNav" scriptevents="1" text="$s🎥 Reset Spawn Selection" sizen="60 10" id="resetView" />
+			<label posn="0 32 10" halign="center" valign="center" textfont="Oswald" text="$fff$tSelect your spawn" sizen="40 10" scale="1.5" />
+			<quad posn="0 25.5 10" halign="center" valign="center" bgcolor="eee" opacity="1." sizen="60 0.75" />
+			<label posn="0 25.5 10" halign="center" valign="center" textcolor="fff" text="$fff⏷" sizen="40 10" scale="2" />
+			
+			{{{ml_spawnFrame}}}
+		</frame>
+		
+		<frame posn="130 25" id="FrameViewKits">
+			<quad posn="0 -25 -60" style="Bgs1" substyle="BgEmpty" halign="center" valign="center" sizen="75 100" />
+			<label posn="0 32 10" halign="center" valign="center" textfont="Oswald" text="$fff$tSelect your kit" sizen="40 10" scale="1.5" />
+			<quad posn="0 25.5 10" halign="center" valign="center" bgcolor="eee" opacity="1." sizen="60 0.75" />
+			<label posn="0 25.5 10" halign="center" valign="center" textcolor="fff" text="$fff⏷" sizen="40 10" scale="2" />
+			
+			<frame posn="0 -25">
+				<frameinstance modelid="fm_Class" id="Frame_Class1" posn="0 40"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class2" posn="0 24"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class3" posn="0 8"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class4" posn="0 -8"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class5" posn="0 -24"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class6" posn="0 -40"/>
+			</frame>
+		</frame>
+		
+		<frame posn="0 -75" scale="1" id="FrameViewReady">
+			<quad posn="0 5 -59" halign="center" valign="center" bgcolor="555" opacity="0.5" sizen="360 40" />	
+			<quad posn="0 24.5 10" halign="center" valign="center" bgcolor="eee" opacity="1." sizen="60 1" />
+			<quad posn="0 5.5 10" halign="center" valign="center" bgcolor="eee" opacity="1." sizen="60 1" />
+			<label posn="0 17 10" textfont="Oswald" halign="center" valign="center2" sizen="60 20" text="READY" textsize="8" />
+			<label posn="0 10 10" textfont="Oswald" halign="center" valign="center2" sizen="60 20" text="to spawn" textsize="4" />
+			<quad posn="0 15" halign="center" valign="center" bgcolor="222" scriptevents="1" sizen="60 20" id="setReady"/>
+		</frame>
+	</frame>
+	
+	<label id="Label_MatchStartTime" halign='center' valign='center' posn="0 0 5" textprefix="$s" text="Start in..." textfont="RajdhaniMono" textsize="8"/>
+	
+	<label id="labelFps" posn="-160 -60" text="FPS" />
+		
+		<script><!--
+			#Include "TextLib" as TL
+			#Include "MathLib" as MathLib
+			
+			#Const C_Quad_IsSelected	"file://Media/Manialinks/Common/WarmUp/ButtonOn.dds"
+			#Const C_Quad_IsNotSelected	"file://Media/Manialinks/Common/WarmUp/ButtonOff.dds"
+			
+			declare CMlFrame[] SpawnsFrame;
+			declare CSmMapLandmark CurrentSelectedSpawn;
+			
+			declare CMlFrame FrameViewSpawns;
+			declare CMlFrame FrameViewKits;
+			declare CMlFrame FrameViewReady;
+			declare CMlFrame FrameViewLogo;
+			
+			declare CMlLabel Label_AtkInfo;
+			
+			Real Lerp(Real a, Real b, Real t)
+			{
+				return a*(1-t) + b*t;
+			}
+			
+			Vec3 Lerp(Vec3 a, Vec3 b, Real t)
+			{
+				declare v1 = a[0]*(1-t) + b[0]*t;
+				declare v2 = a[1]*(1-t) + b[1]*t;
+				declare v3 = a[2]*(1-t) + b[2]*t;
+				
+				return <v1, v2, v3>;
+			}
+		
+			Vec3 stringToVec3(Text string)
+			{
+				log(">" ^ string);
+				declare Text[] Members = TL::Split(",", string);
+				Members[0] = TL::Replace(Members[0], "<", "");
+				Members[2] = TL::Replace(Members[2], ">", "");
+				return <TL::ToReal(Members[0]), TL::ToReal(Members[1]), TL::ToReal(Members[2])>;
+			}
+			
+			Void UpdateAvailableSpawns()
+			{			
+				if (InputPlayer == Null)
+					return;
+					
+				declare netread Net_AttackingClan for Teams[0] = 1;
+				declare netread Net_IsFinalGoal for Teams[0] = False;
+				declare netread Net_SpawnClan for Teams[0] = Integer[Integer];
+				declare netread Net_CurrentOrder for Teams[0] = 0;
+			
+				declare playerClan = InputPlayer.CurrentClan;
+				
+				//< Instant spawn
+					declare availableCount = 0;
+					declare availableIndex = 0;
+				//>
+				
+				if (CurrentSelectedSpawn != Null) 
+				{	
+					declare spawn <=> CurrentSelectedSpawn;
+					declare key = MapLandmarks_PlayerSpawn.keyof(spawn);
+					if (spawn.Tag == "SpawnGoal" && playerClan == Net_AttackingClan)
+						CurrentSelectedSpawn = Null;
+					if (spawn.Tag == "SpawnAttack" && Net_IsFinalGoal)
+						CurrentSelectedSpawn = Null;
+					if (spawn.Tag == "SpawnGoal" && playerClan == 3 - Net_AttackingClan && !Net_IsFinalGoal)
+						CurrentSelectedSpawn = Null;	
+					if (!Net_SpawnClan.existskey(key) || Net_SpawnClan[key] != playerClan)
+						CurrentSelectedSpawn = Null;
+
+				}
+
+				foreach (i => frame in SpawnsFrame)
+				{
+					declare isAvailable for frame = True;
+					isAvailable = True;
+					
+					declare CSmMapLandmark spawn;
+					if (!MapLandmarks_PlayerSpawn.existskey(i))
+						isAvailable = False;
+					else
+					{
+						spawn <=> MapLandmarks_PlayerSpawn[i];
+					
+						if (spawn.Tag == "SpawnGoal" && playerClan == Net_AttackingClan)
+							isAvailable = False;
+						if (spawn.Tag == "SpawnAttack" && Net_IsFinalGoal)
+							isAvailable = False;
+						if (spawn.Tag == "SpawnGoal" && playerClan == 3 - Net_AttackingClan && !Net_IsFinalGoal)
+							isAvailable = False;	
+						if (Net_SpawnClan.existskey(i) && Net_SpawnClan[i] != playerClan)
+							isAvailable = False;	
+						if (playerClan == 3 - Net_AttackingClan && spawn.Order != Net_CurrentOrder)
+						{
+							isAvailable = False;
+						}
+						if (playerClan == 3 - Net_AttackingClan && spawn.Tag == "SpawnGoal" && Net_IsFinalGoal)
+						{
+							isAvailable = True;
+						}
+					}
+					
+					frame.Visible = isAvailable;
+					
+					declare spawnIndex for frame = 0;
+					spawnIndex = i;
+
+					if (isAvailable)
+					{
+						frame.RelativePosition.Y = 16 -(availableCount * 16.); 
+						
+						availableCount += 1;
+						availableIndex = i;
+						
+						declare nameLabel for frame = CMlLabel;
+						declare spawnName = "Spawn #" ^ i;
+						declare spawnPosition for frame = Vec3;
+						declare metadata LandmarkCustomName for spawn = "";
+						if (LandmarkCustomName != "")
+							spawnName = LandmarkCustomName;
+							
+						spawnPosition = spawn.Position;
+						
+						nameLabel.SetText("$t" ^ spawnName);
+					}
+				}
+				
+				if (availableCount == 1)
+				{
+					if (MapLandmarks_PlayerSpawn.existskey(availableIndex))
+						CurrentSelectedSpawn <=> MapLandmarks_PlayerSpawn[availableIndex];
+				}
+			}
+			
+			Void ManageGameView()
+			{
+				declare ClientMarkers for LocalUser = Text[Text];
+			
+				declare ActivePlayer <=> InputPlayer;
+				if (GUIPlayer != Null)
+					ActivePlayer <=> GUIPlayer;
+			
+				if (CurrentSelectedSpawn != Null)
+				{
+					declare p = CurrentSelectedSpawn.Position;
+					
+					if (ActivePlayer.SpawnStatus != CSmPlayer::ESpawnStatus::Spawned)
+						ClientMarkers["age"] ^= "<marker pos='" ^ p.X ^ " " ^ p.Y + 2.5 ^ " " ^ p.Z ^ "' label='Selected Spawn' color='4f4'/>";
+				
+					ClientUI.SpectatorForcedTarget = CurrentSelectedSpawn.Id;
+					if (ActivePlayer != Null)
+						ClientUI.SpectatorForcedClan = ActivePlayer.CurrentClan;
+				}
+				else
+					ClientUI.SpectatorForcedTarget = NullId;
+					
+				if (GUIPlayer != Null)
+				{
+					ClientUI.OverlayHideGauges = (InputPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned && !IsSpectator);
+				}
+				
+				declare netread Net_AttackingClan for Teams[0] = 1;
+				
+				declare netread Net_MatchIsRunning for Teams[0] = False;
+				
+				if (ActivePlayer != Null && Net_MatchIsRunning)
+				{
+					if (ActivePlayer.CurrentClan == Net_AttackingClan)
+						Label_AtkInfo.SetText("You are attacking!");
+					else if (ActivePlayer.CurrentClan == 3 - Net_AttackingClan)
+						Label_AtkInfo.SetText("You are defending!");
+				}
+				else
+					Label_AtkInfo.SetText("");
+			}
+			
+			Void ManageFramePos(Real deltaTime)
+			{
+				declare netread Net_MatchIsRunning for Teams[0] = False;
+			
+				declare goViewKits_pos = <200., 25., 0.>;
+				declare goViewSpawns_pos = <-200., 25., 0.>;
+				declare goTopView_pos = <0., 120., 0.>;
+				declare goBottomView_pos = <0., -120., 0.>;
+				declare goLabelAtkInfo_pos = <0., -60., 0.>;
+				if (InputPlayer != Null && InputPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned
+					&& !IsSpectator
+					&& Net_MatchIsRunning)
+				{
+					goViewKits_pos = <130., 25., 0.>;
+					goViewSpawns_pos = <-130., 25., 0.>;
+					goTopView_pos = <0., 70., 0.>;
+					if (GUIPlayer == Null)
+						goBottomView_pos = <0., -75., 0.>;
+					else
+						goBottomView_pos = <0., -90., 0.>;
+						
+					goLabelAtkInfo_pos = <0., 40., 0.>;
+				}
+					
+				FrameViewKits.RelativePosition = Lerp(FrameViewKits.RelativePosition, goViewKits_pos, deltaTime * 10.);
+				FrameViewSpawns.RelativePosition = Lerp(FrameViewSpawns.RelativePosition, goViewSpawns_pos, deltaTime * 10.);
+				FrameViewLogo.RelativePosition = Lerp(FrameViewLogo.RelativePosition, goTopView_pos, deltaTime * 10.);
+				FrameViewReady.RelativePosition = Lerp(FrameViewReady.RelativePosition, goBottomView_pos, deltaTime * 16.);
+				
+				Label_AtkInfo.RelativePosition = Lerp(Label_AtkInfo.RelativePosition, goLabelAtkInfo_pos, deltaTime * 20.);
+			}
+			
+			Text GetDescShoot(Text kit)
+			{
+				if (kit == "soldier")
+					return "MultiPlasma / MiniGun";
+				if (kit == "sniper")
+					return "Sniper Gun";
+				if (kit == "ninja")
+					return "Knife";
+				if (kit == "mage")
+					return "BumpHell";
+				if (kit == "medic")
+					return "ADN / MediGun";
+				if (kit == "engineer")
+					return "Shotgun";
+				return "???";
+			}
+			
+			Text GetDescAction1(Text kit)
+			{
+				if (kit == "soldier")
+					return "Switch Weapon";
+				if (kit == "sniper")
+					return "Eagle Eye";
+				if (kit == "ninja")
+					return "Player Disguise";
+				if (kit == "mage")
+					return "Curse";
+				if (kit == "medic")
+					return "Switch Weapon";
+				if (kit == "engineer")
+					return "Turret";
+				return "???";
+			}
+			
+			Text GetDescAction2(Text kit)
+			{
+				if (kit == "soldier")
+					return "Grenade";
+				if (kit == "sniper")
+					return "Grenade";
+				if (kit == "ninja")
+					return "Smoke Grenade";
+				if (kit == "mage")
+					return "Forcefield";
+				if (kit == "medic")
+					return "Boucing Ball (Heal Allies)";
+				if (kit == "engineer")
+					return "Grenade";
+				return "???";
+			}
+			
+			Text GetDescWarning(Text kit)
+			{
+				if (kit == "soldier")
+					return " The more the MultiPlasma is charged, the more the damage you do!\n MiniGun can explose if it is used too long!";
+				if (kit == "sniper")
+					return " Using Sniper, stop moving at least 3 seconds to get Explosive Bullets! You can do headshot to shoot harder.\n Eagle Eye gives Resistance, Strength, and faster reloads to you and reveal ennemies!";
+				if (kit == "ninja")
+					return " You will heal each time you hit someone with the knife!\n You can Disguise to look like an ennemy! You loose your disguise when you are shot. You takes damages while being disguised.";
+				if (kit == "mage")
+					return " BumpHell pushes players in the air ! It doesn't make a lot of damages thought.\n Curse gives weakness to the hit player, he takes twice more damages and move slower!\nForcefield create an explosive area around the hit player !";
+				if (kit == "medic")
+					return " ADN isn't very powerful but it is enough to defend yourself.\n MediGun is useful to heal your teammates during the battle! But you can't heal yourself with it.\n The Healing Bouncing Ball is a big ball that heal all your teammates around it !";
+				if (kit == "engineer")
+					return " Shotgun is more powerful near the ennemy than far ! It can push players pretty far.\n Turret are placeable everywhere. You can heal your turret by staying next to it ! Turret upgrade when it stays alive.";
+				return "???";
+			}
+		
+			main()
+			{				
+				for (I, 0, 20)
+				{
+					declare frame <=> cast(CMlFrame, Page.GetFirstChild("fi_Spawn("^I^")"));
+					SpawnsFrame.add(frame);
+					
+					declare Vec3 pos;
+					
+					foreach (spawn in MapLandmarks_PlayerSpawn)
+					{
+						if (spawn != Null)
+						{
+							pos = spawn.Position;
+						}
+					}
+					
+					declare spawnPosition for frame = pos;
+					declare spawnIndex for frame = I;
+					
+					declare nameLabel for frame = (frame.GetFirstChild("Label_SelectSpawn") as CMlLabel);
+					declare quadSelected for frame = (frame.GetFirstChild("Quad_Selected") as CMlQuad);
+					
+					declare parentFrame for nameLabel = CMlFrame;
+					parentFrame = frame;
+				}
+				
+				declare FrameClasses = CMlFrame[];
+				for (I, 1, 6)
+				{
+					declare frame <=> (Page.GetFirstChild("Frame_Class" ^ I) as CMlFrame);
+					declare classLabel for frame <=> (frame.GetFirstChild("Label_SelectClass") as CMlLabel);
+					declare classIcon for frame <=> (frame.GetFirstChild("Label_Icon") as CMlLabel);
+					declare quadSelected for frame <=> (frame.GetFirstChild("Quad_Selected") as CMlQuad);
+					declare counterLabel for frame <=> (frame.GetFirstChild("Label_KitCounter") as CMlLabel);
+					declare isSelected for classLabel = False;
+					
+					if (I == 1) { classLabel.Value = "SOLDIER"; classIcon.Value = ""; }
+					if (I == 2) { classLabel.Value = "SNIPER"; classIcon.Value = ""; }
+					if (I == 3) { classLabel.Value = "MAGE"; classIcon.Value = ""; }
+					if (I == 4) { classLabel.Value = "NINJA"; classIcon.Value = "🏃"; }
+					if (I == 5) { classLabel.Value = "ENGINEER"; classIcon.Value = "🔧"; }
+					if (I == 6) { classLabel.Value = "MEDIC"; classIcon.Value = ""; }
+					
+					declare originalKit for classLabel = TL::ToLowerCase(classLabel.Value);
+					
+					quadSelected.Colorize = <1., 1., 1.>;
+					quadSelected.Opacity = 0.25;
+					
+					FrameClasses.add(frame);
+				}
+				
+				FrameViewSpawns <=> (Page.GetFirstChild("FrameViewSpawns") as CMlFrame);
+				FrameViewKits <=> (Page.GetFirstChild("FrameViewKits") as CMlFrame);
+				FrameViewReady <=> (Page.GetFirstChild("FrameViewReady") as CMlFrame);
+				FrameViewLogo <=> (Page.GetFirstChild("FrameViewLogo") as CMlFrame);
+				
+				declare FrameKitInfo <=> (Page.GetFirstChild("FrameKitInfo") as CMlFrame);
+				declare Label_DescriptionShoot <=> (FrameKitInfo.GetFirstChild("Label_DescriptionShoot") as CMlLabel);
+				declare Label_DescriptionAction1 <=> (FrameKitInfo.GetFirstChild("Label_DescriptionAction1") as CMlLabel);
+				declare Label_DescriptionAction2 <=> (FrameKitInfo.GetFirstChild("Label_DescriptionAction2") as CMlLabel);
+				declare Label_DescriptionWarning <=> (FrameKitInfo.GetFirstChild("Label_DescriptionWarning") as CMlLabel);
+				declare Label_Action1Button <=> (FrameKitInfo.GetFirstChild("Label_Action1Button") as CMlLabel);
+				declare Label_DescClassName <=> (FrameKitInfo.GetFirstChild("Label_DescClassName") as CMlLabel);
+				Label_AtkInfo <=> (Page.GetFirstChild("Label_AtkInfo") as CMlLabel);
+			
+				declare netwrite Net_playerWantRespawn for UI = False;
+				declare netwrite Net_playerSpawn for UI = 0;
+				declare netwrite Net_playerSpawnOrder for UI = 0;
+				declare netwrite Net_playerLastTime for UI = Now;
+				declare netwrite Net_playerWantedKit for UI = "soldier";
+				
+				declare netread Net_MatchStartTime for Teams[0] = 0;
+				
+				declare netread Net_IsFinalGoal for Teams[0] = False;
+				
+				declare netread NetSrv_Handle for Teams[0] = ["" => -1];
+				declare netread NetSrv_Message for Teams[0] = ["" => ""];
+				
+				declare lastHandle = ["ALL" => -2, LocalUser.Login => -2];
+				
+				declare netread NetServ_Dest for Teams[0] = Text[];
+				
+				declare labelFps = cast(CMlLabel, Page.GetFirstChild("labelFps"));
+				
+				// Reset
+				Net_playerWantRespawn = False;
+				Net_playerLastTime = Now;
+				Net_playerSpawn = -1;
+				
+				if (LocalUser != Null)
+					UpdateAvailableSpawns();
+				
+				declare refreshFrames = Now;
+				
+				declare MainFrame = cast(CMlFrame, Page.GetFirstChild("mainFrame"));
+				
+				declare QuadReady = cast(CMlQuad, Page.GetFirstChild("setReady"));
+				declare Label_MatchStartTime = cast(CMlLabel, Page.GetFirstChild("Label_MatchStartTime"));
+				
+				declare lastTimeDelta = Now;
+				declare TimeDelta = Now + 0.;
+				declare lastLog = Now;
+				
+				declare ClientMarkers for LocalUser = Text[Text];
+				
+				while(True)
+				{
+					yield;
+					
+					TimeDelta = -(lastTimeDelta - Now) / 1000.;
+					lastTimeDelta = Now;
+					
+					ClientMarkers["age"] = "";
+					
+					if (Net_MatchStartTime > ArenaNow)
+					{
+						Label_MatchStartTime.SetText("Start in... " ^ MathLib::FloorInteger((Net_MatchStartTime - ArenaNow) * 0.001) ^ "s"); 
+					}
+					else
+					{
+						declare netread Net_MatchIsRunning for Teams[0] = False;
+						
+						if (Net_MatchIsRunning)
+							Label_MatchStartTime.SetText("");
+						else
+							Label_MatchStartTime.SetText("Please wait...");
+					}
+					
+					ManageFramePos(TimeDelta);
+					
+					if (LocalUser == Null || InputPlayer == Null)
+					{
+						FrameKitInfo.RelativePosition = Lerp(FrameKitInfo.RelativePosition, <0., -90., 0.>, TimeDelta * 50.);
+						continue;
+					}
+										
+					if (lastLog < Now)
+					{
+						lastLog = Now - 1;
+						labelFps.SetText("FPS: " ^ 1 / TimeDelta);
+					}
+						
+					/*MainFrame.Visible = Net_IsFinalGoal || InputPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned;
+					Minimap.Visible = Net_IsFinalGoal || InputPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned;*/	
+					
+					if (LocalUser.Language == "fr")
+					{
+						Label_Action1Button.SetText(" A   BUTTON");
+					}
+					else
+						Label_Action1Button.SetText(" Q   BUTTON");
+					
+					declare LOGINS = ["ALL", LocalUser.Login];
+					foreach (LOGIN in LOGINS)
+					if (NetSrv_Handle.existskey(LOGIN) && NetSrv_Handle[LOGIN] != lastHandle[LOGIN])
+					{
+						lastHandle[LOGIN] = NetSrv_Handle[LOGIN];
+						
+						//declare isForMe = NetServ_Dest.exists(LOGIN) || NetServ_Dest.exists(LocalUser.Login);
+						
+						log("received!" ^ NetSrv_Message[LOGIN]);
+						
+						if (NetSrv_Message[LOGIN] == "GoRespawnScreen")
+						{							
+							Net_playerSpawn = -1;
+							Net_playerLastTime = Now;
+							Net_playerWantRespawn = False;
+							
+							if (InputPlayer.CurrentClan == 1)
+							{
+								JoinTeam1();
+							}
+							else
+								JoinTeam2();
+						}
+						if (NetSrv_Message[LOGIN] == "SetPlayerClan" && InputPlayer != Null)
+						{
+
+						}
+					}
+					
+					if (Now > refreshFrames)
+					{
+						refreshFrames = Now + 100;
+						
+						UpdateAvailableSpawns();
+					}
+					
+					/*Minimap.Size = <75., 75.>;
+					//Minimap.ZoomFactor = 1.;
+					//Minimap.MapPosition = <1., 0.5>;
+					Minimap.MapYaw = 0.;*/
+					
+					declare PosKitInfo = <0., -120., 10.>;
+					
+					foreach (frame in SpawnsFrame)
+					{
+						declare spawnIndex for frame = 0;
+						declare quadSelected for frame = CMlQuad;
+						
+						if (CurrentSelectedSpawn != Null
+							&& spawnIndex == MapLandmarks_PlayerSpawn.keyof(CurrentSelectedSpawn))
+						{
+							quadSelected.Colorize = <0., 1., 0.>;
+							quadSelected.Opacity = 1.;
+						}
+						else
+						{
+							quadSelected.Colorize = <1., 1., 1.>;
+							quadSelected.Opacity = 0.25;
+						}
+					}
+										
+					ManageGameView();
+					
+					foreach (frame in FrameClasses)
+					{
+						declare quadSelected for frame = CMlQuad;
+						declare classLabel for frame = CMlLabel;
+						declare originalKit for classLabel = "";
+						declare counterLabel for frame = CMlLabel;
+						
+						if (originalKit == Net_playerWantedKit)
+						{
+							quadSelected.Colorize = <0., 1., 0.>;
+							quadSelected.Opacity = 1.;
+						}
+						else
+						{
+							quadSelected.Colorize = <1., 1., 1.>;
+							quadSelected.Opacity = 0.25;
+						}
+						
+						declare counter = 0;
+						declare ActivePlayer = CSmPlayer;
+						if (InputPlayer != Null)
+							ActivePlayer <=> InputPlayer;
+						if (GUIPlayer != Null)
+							ActivePlayer <=> GUIPlayer;
+						
+						foreach (player in Players)
+						{
+							if (player.CurrentClan == ActivePlayer.CurrentClan)
+							{
+								declare netread Net_playerMayChooseThisKit for player = "";
+								if (Net_playerMayChooseThisKit == originalKit)
+									counter += 1;
+							}
+						}
+						
+						if (classLabel.IsFocused)
+						{
+							PosKitInfo = <0., 0., 10.>;
+								
+							Label_DescriptionShoot.Value = GetDescShoot(originalKit);
+							Label_DescriptionAction1.Value = GetDescAction1(originalKit);
+							Label_DescriptionAction2.Value = GetDescAction2(originalKit);
+							Label_DescriptionWarning.Value = GetDescWarning(originalKit);
+							Label_DescClassName.Value = originalKit;
+						}
+						
+						counterLabel.SetText("" ^ counter);
+					}
+					
+					FrameKitInfo.RelativePosition = Lerp(FrameKitInfo.RelativePosition, PosKitInfo, TimeDelta * 8.5);
+					
+					/*if (CurrentSelectedSpawn != Null)
+					{
+						declare pos = CurrentSelectedSpawn.Position;
+						
+						Minimap.WorldPosition = Lerp(Minimap.WorldPosition, pos, TimeDelta / 0.25);
+						Minimap.ZoomFactor = Lerp(Minimap.ZoomFactor, 5., TimeDelta / 0.25);
+					}
+					else
+					{
+						Minimap.WorldPosition = Lerp(Minimap.WorldPosition, <192., 0., 192.>, TimeDelta / 0.25);
+						Minimap.ZoomFactor = Lerp(Minimap.ZoomFactor, 1., TimeDelta / 0.25);
+					}*/
+					
+					if (Net_playerWantRespawn)
+					{
+						Net_playerLastTime = Now;
+						Net_playerSpawn = MapLandmarks_PlayerSpawn.keyof(CurrentSelectedSpawn);
+						
+						QuadReady.BgColor = <0., 0.25, 0.>;
+						if (QuadReady.IsFocused)
+							QuadReady.BgColor = <0.1, 0.20, 0.>;
+					}
+					else
+					{
+						QuadReady.BgColor = <0.25, 0.1, 0.1>;
+						if (QuadReady.IsFocused)
+							QuadReady.BgColor = <0.20, 0.15, 0.>;
+					}
+					
+					foreach (event in PendingEvents)
+					{
+						if (event.Type == CMlEvent::Type::MouseClick)
+						{
+							declare control <=> event.Control;
+							if (control.ControlId == "selectSpawn")
+							{
+								declare parentFrame for control = CMlFrame;
+								declare spawnIndex for parentFrame = 0;
+								declare isAvailable for parentFrame = False;
+								
+								if (isAvailable)
+								{
+									CurrentSelectedSpawn <=> MapLandmarks_PlayerSpawn[spawnIndex];
+								}
+							}
+							if (control.ControlId == "resetView")
+								CurrentSelectedSpawn = Null;
+								
+							if (control.ControlId == "setReady")
+							{
+								Net_playerWantRespawn = !Net_playerWantRespawn;
+								
+								if (CurrentSelectedSpawn != Null)
+								{
+									Net_playerLastTime = Now;
+									Net_playerSpawn = MapLandmarks_PlayerSpawn.keyof(CurrentSelectedSpawn);
+								}
+							}
+							
+							if (control.ControlId == "Label_SelectClass")
+							{
+								declare originalKit for control = "";
+								Net_playerWantedKit = originalKit;
+							}			
+							
+							if (control.ControlId == "Label_SelectSpawn")
+							{
+								declare parentFrame for control = CMlFrame;
+								declare spawnIndex for parentFrame = 0;
+								if (MapLandmarks_PlayerSpawn.existskey(spawnIndex))
+									CurrentSelectedSpawn <=> MapLandmarks_PlayerSpawn[spawnIndex];
+							}			
+						}
+					}
+				}
+			}
+		--></script>
+	</manialink>
+	""";
+}
+
+Text layer_GetOvertime()
+{
+	declare CC = "halign='center' valign='center'";
+
+	return """
+	<manialink version="3">
+		<frame pos="0 58" z-index="-10" id="Frame_Overtime">
+			<label {{{CC}}} pos="0 6.25" text="$s⏳" scale="1.75"/>
+			<label {{{CC}}} text="$sOVERTIME" textfont="Oswald"/>
+			<label {{{CC}}} id="Label_OvertimeEndTime" pos="0 -5" textprefix="$s$f00" text="0" textfont="Oswald"/>
+		</frame>
+		
+		<script><!--
+			#Include "MathLib" as MathLib
+		
+			main()
+			{
+				declare frame <=> (Page.GetFirstChild("Frame_Overtime") as CMlFrame);
+				declare Label_OvertimeEndTime <=> (Page.GetFirstChild("Label_OvertimeEndTime") as CMlLabel);
+				declare netread Net_IsOvertime for Teams[0] = False;
+				declare netread Net_OvertimeEndTime for Teams[0] = 0;
+				
+				while(True)
+				{	
+					yield;
+					frame.Visible = Net_IsOvertime;
+					
+					Label_OvertimeEndTime.Value = MathLib::FloorInteger((Net_OvertimeEndTime - ArenaNow) / 1000.) ^ " SECONDS";
+				}
+			}
+		--></script>
+	</manialink>
+	""";
+}
+
+Text GetScoreManialink()
+{
+	return """
+	<quad pos="0 20" size="1.5 25" bgcolor="999" halign="center" valign="center" />
+	<label pos="-10 20" text="0" textcolor="0dd" opacity="0.75" halign="right" valign="center" textsize="17.5" textfont="OswaldMono" />
+	<label pos="-150 20" text="❄ Cryo" textcolor="0dd" opacity="0.75" halign="left" valign="center" textsize="17.5" textfont="OswaldMono" />
+	<label pos="10 20" text="0" textcolor="e80" opacity="0.75" halign="left" valign="center" textsize="17.5" textfont="OswaldMono" />
+	<label pos="150 20" text="🔥 Meteor" textcolor="e80" opacity="0.75" halign="right" valign="center" textsize="17.5" textfont="OswaldMono" />
+	""";
+}
+
+Text layer_GetGateMarkers()
+{
+	declare CC = "halign='center' valign='center'";
+	declare Instances = "";
+	for (i, 0, 15)
+	{
+		Instances ^= """<frameinstance id="GateMarkers_Instance_{{{i}}}" modelid="FrameModel_Marker" />""";
+	}
+
+	return """
+	<manialink version="3">
+		<framemodel id="FrameModel_Marker" scale="0.75">
+			<label {{{CC}}} id="Label_Name" pos="0 4" textprefix="$s$n" text="Gate" textsize="3" textfont="Oswald" />
+			<label {{{CC}}} id="Label_Icon" pos="0 0" textprefix="$s$n" text="⏷" textsize="4" />
+		</framemodel>
+		
+		{{{Instances}}}
+		
+		<script><!--
+			main()
+			{
+				declare ClientMarkers for LocalUser = Text[Text];
+				declare netread Net_CurrentOrder for Teams[0] = 0; 
+				declare netread Net_IsFinalGoal for Teams[0] = False;
+				
+				declare ValidatedMarkers for LocalUser = Boolean[Text];
+				
+				declare CMlFrame[] Instances;
+				for (i, 0, 15)
+				{
+					declare frame <=> (Page.GetFirstChild("GateMarkers_Instance_" ^ i) as CMlFrame);
+					declare label_Name for frame <=> (frame.GetFirstChild("Label_Name") as CMlLabel);
+					declare label_Icon for frame <=> (frame.GetFirstChild("Label_Icon") as CMlLabel);
+					
+					Instances.add(frame);
+				}
+				
+				while(True)
+				{
+					yield;
+					
+					ClientMarkers["gatemarker"] = "";
+					
+					foreach (frame in Instances)
+					{
+						declare tempIsVisible for frame = False;
+						tempIsVisible = False;
+					}
+				
+					declare i = 0;
+					foreach (gate in MapLandmarks_Gate)
+					{
+						if (gate.Order + 0 == Net_CurrentOrder || (Net_IsFinalGoal && gate.Order + 1 == Net_CurrentOrder))
+						{
+							declare Pos = gate.Position;
+							Pos.Y += 6.;
+						
+							ClientMarkers["gatemarker"] ^= "<marker pos='" ^ Pos.X ^ " " ^ Pos.Y ^ " " ^ Pos.Z ^ "' manialinkframeid='GateMarkers_Instance_" ^ i ^ "' />";
+							
+							declare metadata LandmarkCustomName for gate = "";
+							declare frame <=> Instances[i];
+							declare label_Name for frame = CMlLabel;
+							declare label_Icon for frame = CMlLabel;
+							
+							label_Name.Value = "$fff";
+							if (Net_IsFinalGoal)
+								label_Name.Value = "$2d2";
+							
+							if (!Net_IsFinalGoal)
+							{
+								if (LandmarkCustomName != "")
+									label_Name.Value ^= LandmarkCustomName;
+								else
+									label_Name.Value ^= "Gate";
+							}
+							else
+								label_Name.Value ^= "Access to goal";
+								
+							label_Icon.Value = "$fff⏷";
+							if (Net_IsFinalGoal)
+								label_Icon.Value = "$2d2⏷";
+							
+							declare tempIsVisible for frame = False;
+							tempIsVisible = True;
+						} 
+					}
+					
+					foreach (frame in Instances)
+					{
+						declare tempIsVisible for frame = False;
+						frame.Visible = tempIsVisible;
+					}
+				}
+			}
+		--></script>
+	</manialink>
+	""";
+}
+
+Text layer_GetGoalMarkers()
+{
+	declare CC = "halign='center' valign='center'";
+
+	return """
+	<manialink version="3">
+		<frame id="Frame_GoalMarker" scale="0.75">
+			<label {{{CC}}} pos="0 4.5" textprefix="$s$n" text="$0f0GOAL" textfont="Oswald" size="100 10"/>
+			<label {{{CC}}} pos="0 0" textprefix="$s" text="$0f0⏷" textsize="4" />
+		</frame>
+		
+<script><!--
+			main()
+			{
+				declare ClientMarkers for LocalUser = Text[Text];
+				declare netread Net_IsFinalGoal for Teams[0] = False; 
+				
+				declare ValidatedMarkers for LocalUser = Boolean[Text];
+				
+				declare Instance <=> (Page.GetFirstChild("Frame_GoalMarker") as CMlFrame);
+				
+				while(True)
+				{
+					yield;
+					
+					Instance.Visible = Net_IsFinalGoal;
+					
+					ClientMarkers["goalmarker"] = "";
+					foreach (goal in MapLandmarks)
+					{
+						if (goal.Tag == "Goal" && Instance.Visible)
+						{
+							declare Pos = goal.Position;
+							Pos.Y += 26.;
+						
+							ClientMarkers["goalmarker"] ^= "<marker pos='" ^ Pos.X ^ " " ^ Pos.Y ^ " " ^ Pos.Z ^ "' manialinkframeid='Frame_GoalMarker' />";
+						} 
+					}
+				}
+			}
+		--></script>
+	</manialink>
+	""";
+}
+
+Void SendSrvMessage(Text PlayerLogin, Text MessageType)
+{
+	declare netwrite NetSrv_Handle for Teams[0] = ["" => -1];
+	declare netwrite NetSrv_Message for Teams[0] = ["" => ""];
+	if (!NetSrv_Handle.existskey(PlayerLogin))
+		NetSrv_Handle[PlayerLogin] = 1;
+	if (!NetSrv_Message.existskey(PlayerLogin))
+		NetSrv_Message[PlayerLogin] = MessageType;
+		
+	NetSrv_Handle[PlayerLogin] += 1;
+	NetSrv_Message[PlayerLogin] = MessageType;
+	
+}
+
+Void AddLandmark(CNod nod, CSmMapLandmark originalLandmark)
+{
+	if (nod is CSmMapPlayerSpawn)
+	{
+		declare spawn <=> cast(CSmMapPlayerSpawn, nod);
+		
+		if (!PlayerSpawns.existskey(originalLandmark.Tag))
+		{
+			PlayerSpawns[originalLandmark.Tag] = CSmMapLandmark[][Integer];
+		}
+		if (!PlayerSpawns[originalLandmark.Tag].existskey(originalLandmark.Order))
+		{
+			PlayerSpawns[originalLandmark.Tag][originalLandmark.Order] = CSmMapLandmark[];
+		}
+
+		PlayerSpawns[originalLandmark.Tag][originalLandmark.Order].add(originalLandmark);
+	}
+	if (nod is CSmMapGauge)
+	{
+		declare gauge <=> cast(CSmMapGauge, nod);
+		declare isGoal = originalLandmark.Tag == "Goal";
+		declare isGate = originalLandmark.Tag == "Gate";
+		
+		if (isGoal)
+			Goals[originalLandmark.Order] <=> originalLandmark;
+		else if (!isGate)
+		{
+			if (!Checkpoints.existskey(originalLandmark.Order))
+			{
+				Checkpoints[originalLandmark.Order] = [Null];
+				Checkpoints[originalLandmark.Order].clear();
+			}
+			
+			Checkpoints[originalLandmark.Order].add(originalLandmark);
+		}
+		else
+		{
+			if (!Gates.existskey(originalLandmark.Order))
+			{
+				Gates[originalLandmark.Order] = [Null];
+				Gates[originalLandmark.Order].clear();
+			}
+			
+			Gates[originalLandmark.Order].add(originalLandmark);
+		}
+	}
+}
+
+Void RefreshCheckpointsInterfaceVariables()
+{
+	if (Checkpoints.existskey(CurrentOrder) && !get_IsFinalGoal)
+	{
+		StormiumIT::SetGoalCount(Checkpoints[CurrentOrder].count);
+		foreach (i => checkpoint in Checkpoints[CurrentOrder])
+		{
+			StormiumIT::SetGoalColorDef(i, Teams[checkpoint.Base.Clan - 1].ColorPrimary);
+			StormiumIT::SetGoalColorAtk(i, Teams[checkpoint.Gauge.Clan - 1].ColorPrimary);
+			StormiumIT::SetGoalValue(i, checkpoint.Gauge.ValueReal);
+			
+			declare metadata LandmarkCustomName for checkpoint = "";
+			declare Pos = checkpoint.Position;
+			Pos.Y += 3.;
+			
+			StormiumIT::SetGoalName(i, LandmarkCustomName);
+			StormiumIT::SetGoalPosition(i, Pos);
+		}
+	}
+	else
+	{
+		StormiumIT::SetGoalCount(0);
+	}
+}
+
+
+Void UpdateColors()
+{
+	if (CurrentGameState == EGameState_Starting)
+	{
+		foreach (clanName => order in PlayerSpawns)
+		{
+			declare clanInt = 0;
+			if (clanName == "SpawnAttack")
+				clanInt = AttackingClan;
+			else
+				clanInt = 3 - AttackingClan;
+			foreach (spawns in order)
+			{				
+				foreach (spawn in spawns)
+				{
+					declare spawnClan for spawn = 0;
+					spawnClan = clanInt;
+				
+					declare base <=> spawn.Base;
+					if (base != Null)
+					{
+						base.IsActive = True;
+						base.Clan = spawnClan;
+					}
+				}
+			}
+		}
+		
+		
+		foreach (goal in Goals)
+		{
+			declare base <=> goal.Base;
+			if (base != Null)
+			{
+				base.IsActive = True;
+				base.Clan = 3 - AttackingClan;
+			}
+				
+			declare gauge <=> goal.Gauge;
+			gauge.Value = 750;
+			gauge.Max = 750;
+			gauge.Clan = 3 - AttackingClan;	
+			gauge.Captured = True;		
+			gauge.Speed = 0;
+		}
+		
+		foreach (clanOrder => order in Checkpoints)
+		{
+			foreach (checkpoint in order)
+			{
+				declare base <=> checkpoint.Base;
+				base.IsActive = True;
+				base.Clan = 3 - AttackingClan;
+				
+				declare gauge <=> checkpoint.Gauge;
+				gauge.Value = 0;
+				gauge.Max = S_TimeToCaptureCheckpoint * 1000;
+				gauge.Clan = AttackingClan;
+			}
+		}
+		
+		foreach (clanOrder => order in Gates)
+		{
+			foreach (gate in order)
+			{
+				declare _gate <=> gate.Gate;
+				_gate.Automatic = False;
+				_gate.ManualClosed = True;
+				_gate.Clan = 0;
+		
+				declare gauge <=> gate.Gauge;
+				gauge.Value = 10000;
+				gauge.Max = 10000;
+				gauge.Captured = False;
+				gauge.Clan = 3 - AttackingClan;
+				gauge.Speed = 0;
+			}
+		}
+	}
+	
+	if (CurrentGameState == EGameState_InPlay)
+	{
+		foreach (clanName => order in PlayerSpawns)
+		{
+			declare clanInt = 1;
+			if (clanName == "SpawnAttack")
+				clanInt = AttackingClan;
+			else
+			{
+				clanInt = 3 - AttackingClan;
+			}
+		
+			foreach (spawns in order)
+			foreach (spawn in spawns)
+			{
+				declare spawnClan for spawn = 0;
+				spawnClan = clanInt;
+				if (spawn.Order <= CurrentOrder - 1
+					&& spawn.Tag != "SpawnGoal")
+					spawnClan = AttackingClan;
+				
+				declare base <=> spawn.Base;
+				if (base != Null)
+				{
+					base.IsActive = True;
+					base.Clan = spawnClan;
+					
+					if (spawn.Order <= CurrentOrder)
+						base.Clan = spawnClan;
+					else
+					{
+						spawnClan = 0;
+						base.Clan = 0;
+					}
+				}
+			}
+		}
+		
+		foreach (clanOrder => order in Checkpoints)
+		{
+			foreach (checkpoint in order)
+			{
+				declare base <=> checkpoint.Base;
+				base.IsActive = True;
+				base.Clan = 3 - AttackingClan;
+				
+				if (checkpoint.Order <= CurrentOrder - 1)
+					base.Clan = AttackingClan;
+
+			}
+		}
+		
+		foreach (clanOrder => order in Gates)
+		{	
+			foreach (gate in order)
+			{
+					declare _gate <=> gate.Gate;
+					_gate.Automatic = False;
+					_gate.ManualClosed = True;
+					
+					/*if (CurrentOrder < clanOrder + 1)
+						_gate.Clan = 3 - AttackingClan;
+					else
+						_gate.Clan = AttackingClan;*/
+					_gate.Clan = 0;
+		
+					declare gauge <=> gate.Gauge;
+					gauge.Value = S_RushTimeGateDuration + 1;
+					gauge.Max = S_RushTimeGateDuration + 1;
+					gauge.Captured = gauge.Value != gauge.Max;
+					
+					if (gate.Order < CurrentOrder
+						&& gate.Order + 2 < RangeCaptured.count)
+					{
+						gauge.Value = 0;
+						gauge.Max = 0;
+						gauge.Captured = False;
+						_gate.Automatic = False;
+						_gate.ManualClosed = False;
+					} 
+					
+					if (CurrentOrder < clanOrder + 1)
+						gauge.Clan = 3 - AttackingClan;
+					else
+						gauge.Clan = AttackingClan;
+			}	
+		}
+	}
+	
+	declare netwrite Net_SpawnClan for Teams[0] = Integer[Integer];
+	foreach (I => spawn in MapLandmarks_PlayerSpawn)
+	{
+	
+		declare spawnClan for spawn = 0;
+		Net_SpawnClan[I] = spawnClan;
+	}
+}
