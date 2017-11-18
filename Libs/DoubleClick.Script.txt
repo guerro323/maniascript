@@ -1,0 +1,55 @@
+declare Boolean G_DoubleClick;
+declare Integer G_DoubleClickCheck;
+declare Integer G_DoubleClickLastTime;
+
+Void Loop(Boolean _MouseButtonActive, CPlayer _Declarator)
+{
+	if (_Declarator != Null)
+	{
+		declare doubleClickCheck for _Declarator = Integer;
+		declare doubleClickLastTime for _Declarator = Integer;
+		G_DoubleClickCheck = doubleClickCheck;
+		G_DoubleClickLastTime = doubleClickLastTime;
+	}
+
+	if (_MouseButtonActive && !G_DoubleClick)
+	{
+		if (G_DoubleClickCheck != 1)
+			G_DoubleClickCheck += 1;
+		G_DoubleClickLastTime = Now;
+		
+		if (G_DoubleClickCheck > 2)
+		{
+			G_DoubleClickCheck = 0;
+			G_DoubleClick = True;
+		}
+	}	
+	if (!_MouseButtonActive && !G_DoubleClick && G_DoubleClickCheck == 1)
+	{
+		G_DoubleClickLastTime += 50;
+		G_DoubleClickCheck += 1;
+	}
+	
+	if (G_DoubleClickLastTime + 200 < Now)
+	{
+		G_DoubleClickCheck = 0;
+	}	
+	
+	if (_Declarator != Null)
+	{
+		declare doubleClickCheck for _Declarator = Integer;
+		declare doubleClickLastTime for _Declarator = Integer;
+		doubleClickCheck = G_DoubleClickCheck;
+		doubleClickLastTime = G_DoubleClickLastTime;
+	}
+}
+
+Void Loop(Boolean _MouseButtonActive)
+{
+	Loop(_MouseButtonActive, Null);
+}
+
+Boolean IsDoubleClick()
+{
+	return G_DoubleClick;
+}
