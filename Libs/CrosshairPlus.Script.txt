@@ -1,0 +1,72 @@
+#Include "Libs/Nadeo/Layers2.Script.txt" as Layers
+#Include "Libs/Nadeo/ShootMania/Score.Script.txt" as Score
+#Include "MathLib" as MathLib
+#Include "TextLib" as TextLib
+
+#Const _Path "file://Media/AgEAction/"
+#Const BC """ halign="center" valign="bottom" """
+
+Text GetLayer()
+{
+	return """
+<manialink version="3">
+	<frame id="FrameCrosshair" hidden="1">
+		<frame id="MultiplasmaCrosshair" pos="0 -8">
+			<frame id="Left" pos="-9">
+				<quad {{{BC}}} size="16 16" image="{{{_Path}}}MultiplasmaCrosshair.png"/>
+				<quad {{{BC}}} pos="6.1 1" size="1 7" bgcolor="0f0" />
+			</frame>
+			<frame id="Right" pos="9">
+				<quad {{{BC}}} size="16 16" image="{{{_Path}}}MultiplasmaCrosshair_R.png"/>
+				<quad {{{BC}}} pos="-6.1 1" size="1 7" bgcolor="0f0" />
+			</frame>
+		</frame>
+		<frame id="MinigunCrosshair">
+		
+		</frame>
+		<frame id="SnipergunCrosshair">
+		
+		</frame>
+		<frame id="BumphellCrosshair">
+		
+		</frame>
+		<frame id="KnifeCrosshair">
+		
+		</frame>
+		<frame id="BumphellCrosshair">
+		
+		</frame>
+		<frame id="ShotgunCrosshair">
+		
+		</frame>
+		<frame id="NanogunCrosshair">
+		
+		</frame>
+		<frame id="CrossboomCrosshair">
+		
+		</frame>
+	
+	</frame>
+	
+	<script><!--
+		main()
+		{
+			while(True)
+			{
+				yield;
+			}
+		}
+	--></script>
+</manialink>
+	""";
+}
+
+Void Load()
+{
+	Layers::Create("CHPLayer", GetLayer());
+}
+
+Void Yield()
+{
+	Layers::Attach("CHPLayer");
+}

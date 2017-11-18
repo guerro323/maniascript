@@ -1,0 +1,421 @@
+/**
+ * Message library
+ */
+#Include "Libs/Nadeo/Layers2.Script.txt" as Layers2
+#Include "Libs/Stormium/Mathf.Script.txt" as Mathf
+
+#Const Version		"2017-05-22"
+#Const ScriptName	"Libs/Stormium/InterfaceClassSelector.Script.txt"
+
+#Const C_MainLayerName "CInterfaceClassSelector.Main"
+
+#Const CC """ halign="center" valign="center" """
+#Const LC """ halign="left" valign="center" """
+#Const RC """ halign="right" valign="center" """
+#Const Ratio 0.5625 //< 9/16
+#Const Media "file://Media/AgEMedia/"
+
+Text GetMainLayer()
+{
+	declare Instances = Text;
+	for (i, 1, 15)
+	{
+		Instances ^= """<frameinstance id="Frame_Markers#{{{i}}}" modelid="FrameModel_Marker" />""";
+	}
+
+	return """
+	<manialink version="3">
+	<label textsize="1.5" pos="140 -80" halign="right" valign="center" text="$sPress K to open kit selector"/>
+	<label textsize="1.5" pos="140 -85" halign="right" valign="center" text="$sPress G+[1,9] to select a kit faster"/>
+	<frame id="ClassSelector" z-index="9999">
+		<frame id="Frame_BG" z-index="-90">
+			<quad {{{CC}}} sizen="360 180" style="Bgs1" substyle="BgEmpty" opacity="0.01" />
+			<quad {{{CC}}} sizen="360 180" bgcolor="000" opacity="0.25" />
+			<quad pos="0 17" {{{CC}}} sizen="180 90" bgcolor="000" opacity="0.75" />
+			<quad pos="0 17" {{{CC}}} sizen="180 90" style="Bgs1InRace" substyle="BgGradTop" />
+			<quad pos="0 17" {{{CC}}} sizen="180 90" style="Bgs1InRace" substyle="BgGradTop" />
+			<quad pos="0 52" {{{CC}}} sizen="180 20" bgcolor="000" opacity="0.75" />
+			<quad z-index="1" pos="-95 -60" modulatecolor="000" size="180 90" scale="0.8" image="{{{Media}}}ClassSelector/ClassSelectionPicBg.png" {{{CC}}}/>
+		</frame>
+		<framemodel id="FrameModel_Class" z-index="100" scale="1">
+			<label id="LabelKitName" size="14 14" textfont="RajdhaniMono" pos="0 5.5" {{{CC}}} text="soldier" textprefix="$t" textsize="2" />
+			<label id="LabelKitTaken" size="14 14" textfont="RajdhaniMono" pos="0 -7.5" z-index="1" {{{CC}}} text="0" textsize="1.8" />
+			<quad id="QuadKitIcon" pos="0 -1" {{{CC}}} size="10 10" image="{{{Media}}}Kits/" />
+			<quad id="QuadIsSelected" {{{CC}}} modulatecolor="25f" size="16 16" image="{{{Media}}}QuadButton.png" scriptevents="1"  hidden="0" />
+			<quad z-index="1" pos="0 -8" {{{CC}}} size="10 5" style="BgsChallengeMedals" substyle="BgPlayed" />
+		</framemodel>
+		
+		<framemodel id="FrameModel_BgClass">
+			<quad {{{CC}}} modulatecolor="25f" pos="0 13.5" sizen="48 10.5" image="{{{Media}}}ClassSelector/ClassSelectionBgTree.png"/>
+			<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 12" text="Attack" textprefix="$t$o" textcolor="fff" />
+			<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 12.5" text="Attack" textprefix="$t$o" textcolor="000" />
+			<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 11.5" text="Attack" textprefix="$t$o" textcolor="000" />
+			<label textfont="Oswald" z-index="1" {{{CC}}} pos="0.5 12" text="Attack" textprefix="$t$o" textcolor="000" />
+			<label textfont="Oswald" z-index="1" {{{CC}}} pos="-0.5 12" text="Attack" textprefix="$t$o" textcolor="000" />
+		</framemodel>
+		
+		<frame pos="0 -48" z-index="1">
+			<quad bgcolor="fff" {{{CC}}} pos="0 10" size="144 0.5"/>
+			<quad z-index="-1" bgcolor="fff" {{{CC}}} pos="-24 2" size="0.5 26"/>
+			<quad z-index="-1" bgcolor="fff" {{{CC}}} pos="24 2" size="0.5 26" scriptevents="1"/>
+			<frame id="FirstRow">
+				<frame pos="-48 2">
+					<quad {{{CC}}} modulatecolor="25f" pos="0 13.5" sizen="48 10.5" image="{{{Media}}}ClassSelector/ClassSelectionBgTree.png"/>
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 12" text="Attack" textprefix="$t$o" textcolor="fff" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 12.5" text="Attack" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 11.5" text="Attack" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0.5 12" text="Attack" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="-0.5 12" text="Attack" textprefix="$t$o" textcolor="000" />
+				</frame>
+				<frameinstance id="FrameClass_1"  pos="-64 0" modelid="FrameModel_Class"/>
+				<frameinstance id="FrameClass_2"  pos="-48 0" modelid="FrameModel_Class"/>
+				<frameinstance id="FrameClass_3"  pos="-32 0" modelid="FrameModel_Class"/>
+			</frame>
+			<frame id="SecondRow">
+				<frame pos="0 2">
+					<quad {{{CC}}} modulatecolor="f25" pos="0 13.5" sizen="48 10.5" image="{{{Media}}}ClassSelector/ClassSelectionBgTree.png"/>
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 12" text="Defense" textprefix="$t$o" textcolor="fff" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 12.5" text="Defense" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 11.5" text="Defense" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0.5 12" text="Defense" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="-0.5 12" text="Defense" textprefix="$t$o" textcolor="000" />
+				</frame>
+				<frameinstance id="FrameClass_4"  pos="-16 0" modelid="FrameModel_Class"/>
+				<frameinstance id="FrameClass_5"  pos="-0 0" modelid="FrameModel_Class"/>
+				<frameinstance id="FrameClass_6"  pos="16 0" modelid="FrameModel_Class"/>
+			</frame>
+			<frame id="ThirdRow">
+				<frame pos="48 2">
+					<quad {{{CC}}} modulatecolor="2f5" pos="0 13.5" sizen="48 10.5" image="{{{Media}}}ClassSelector/ClassSelectionBgTree.png"/>
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 12" text="Support" textprefix="$t$o" textcolor="fff" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 12.5" text="Support" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0 11.5" text="Support" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="0.5 12" text="Support" textprefix="$t$o" textcolor="000" />
+					<label textfont="Oswald" z-index="1" {{{CC}}} pos="-0.5 12" text="Support" textprefix="$t$o" textcolor="000" />
+				</frame>
+				<frameinstance id="FrameClass_7"  pos="32 0" modelid="FrameModel_Class"/>
+				<frameinstance id="FrameClass_8"  pos="48 0" modelid="FrameModel_Class"/>
+				<frameinstance id="FrameClass_9"  pos="64 0" modelid="FrameModel_Class"/>
+			</frame>
+		</frame>
+		
+		<frame id="FrameOK" pos="0 -70">
+			<label {{{CC}}} textfont="Oswald" text="Confirm" translate="1" textsize="5"/>
+			<quad id="ConfirmSelection"  {{{CC}}} sizen="40 10" bgcolor="000" opacity="0.75" scriptevents="1"/>
+		</frame>
+		
+		<frame id="Description" pos="0 17" z-index="100">
+			<label id="Label_DescClassName" textfont="RajdhaniMono" pos="-1 35" {{{CC}}} text="SOLDIER" textprefix="$t" textsize="10" />
+			<frame pos="0 0" id="FrameKitInfo" z-index="10">
+				<label halign="right" valign="center" pos="85 35 5" textprefix="$s " text="Press '1' to heal yourself" scale="0.85" />	
+				
+				<frame pos="0 25.75" id="FrameDescShootButton" scale="0.95">
+					<label pos="-86 0 2" text=" SHOOT BUTTON" halign="left" valign="top" textfont="Oswald" />
+					<quad pos="-88 2 1" sizen="175 7.5" bgcolor="000" opacity="0.5" />
+					<quad pos="-88 2 0" sizen="175 15" bgcolor="000" opacity="0.25" />		
+					<label id="Label_DescriptionShoot" posn="-80 -7.5 0" textprefix="$s " text="MultiPlasma / MiniGun" />	
+				</frame>
+				<frame pos="0 8.5" id="FrameDescAction1Button" scale="0.95">
+					<label id="Label_Action1Button" posn="-86 0 2" text=" A   BUTTON" halign="left" valign="top" textfont="Oswald" />
+					<label pos="-84.5 -1.5 2" text=" " halign="center" valign="center" textfont="Oswald" textsize="5" />
+					<quad pos="-88 2 1" sizen="175 7.5" bgcolor="000" opacity="0.5" />
+					<quad pos="-88 2 0" sizen="175 15" bgcolor="000" opacity="0.25" />		
+					<label id="Label_DescriptionAction1" posn="-80 -7.5 0" textprefix="$s " text="Switch Weapon between MultiPlasma and MiniGun" />	
+				</frame>
+				<frame pos="0 -8.5 5" id="FrameDescAction2Button" scale="0.95">
+					<label pos="-86 0" text=" E   BUTTON" halign="left" valign="top" textfont="Oswald" />
+					<label pos="-84.5 -1.5" text=" " halign="center" valign="center" textfont="Oswald" textsize="5" />
+					<quad pos="-88 2" sizen="175 7.5" bgcolor="000" opacity="0.5" />
+					<quad pos="-88 2" sizen="175 15" bgcolor="000" opacity="0.25" />		
+					<label id="Label_DescriptionAction2" posn="-80 -7.5 0" textprefix="$s " text="Grenade" />	
+				</frame>
+				
+				<label id="Label_DescriptionWarning" posn="-84 -22" sizen="170" autonewline="1" halign="left" valign="top" textprefix="$f00" text=" MultiPlasma is very powerful with 4 amunitions !
+ MiniGun can explose if it is used too long !" textsize="2"/>
+
+			</frame>
+		</frame>
+	</frame>
+	
+	<script><!--
+		declare CMlFrame[] ClassFrames;
+		declare CMlFrame FrameOK;
+		
+		Text GetDescShoot(Text kit)
+		{
+			if (kit == "soldier")
+				return "MultiPlasma / MiniGun";
+			if (kit == "sniper")
+				return "Sniper Gun";
+			if (kit == "ninja")
+				return "Knife";
+			if (kit == "mage")
+				return "BumpHell";
+			if (kit == "medic")
+				return "Nanogun / Medigun (Nanogun Field)";
+			if (kit == "engineer")
+				return "Shotgun";
+			if (kit == "teamlord")
+				return "CrossBoom";
+			if (kit == "constructor")
+				return "Grenade Launcher";
+			return "???";
+		}
+		
+		Text GetDescAction1(Text kit)
+		{
+			if (kit == "soldier")
+				return "Switch Weapon";
+			if (kit == "sniper")
+				return "Eagle Eye";
+			if (kit == "ninja")
+				return "Player Disguise";
+			if (kit == "mage")
+				return "Curse";
+			if (kit == "medic")
+				return "Switch Weapon";
+			if (kit == "engineer")
+				return "Turret";
+			if (kit == "teamlord")
+				return "Mega Buff (not done yet)";
+			if (kit == "constructor")
+				return "Construct";
+			return "???";
+		}
+		
+		Text GetDescAction2(Text kit)
+		{
+			if (kit == "soldier")
+				return "Grenade";
+			if (kit == "sniper")
+				return "Grenade";
+			if (kit == "ninja")
+				return "Smoke Grenade";
+			if (kit == "mage")
+				return "Forcefield";
+			if (kit == "medic")
+				return "Boucing Ball (Heal Allies)";
+			if (kit == "engineer")
+				return "Grenade";
+			if (kit == "teamlord")
+				return "Grenade (will use another weapon soon)";
+			if (kit == "constructor")
+				return "Proximity Mine";
+			return "???";
+		}
+		
+		Text GetDescWarning(Text kit)
+		{
+			if (kit == "soldier")
+				return " The more the MultiPlasma is charged, the more the damage you do!\n MiniGun can explose if it is used too long!";
+			if (kit == "sniper")
+				return " Using Sniper, stop moving at least 3 seconds to get Explosive Bullets! You can do headshot to shoot harder.\n Eagle Eye gives Resistance, Strength, and faster reloads to you and reveal ennemies!";
+			if (kit == "ninja")
+				return " You will heal each time you hit someone with the knife!\n You can Disguise to look like an ennemy! You loose your disguise when you are shot. You takes damages while being disguised.";
+			if (kit == "mage")
+				return " BumpHell pushes players in the air ! It doesn't make a lot of damages thought.\n Curse gives weakness to the hit player, he takes twice more damages and move slower!\nForcefield create an explosive area around the hit player !";
+			if (kit == "medic")
+				return " Nanogun can damage ennemies and heal your allies.\n The medigun (or nanogun field) can heal multiple target at the same time, but can't deal damage.\n The Healing Bouncing Ball is a big ball that heal all your teammates around it !";
+			if (kit == "engineer")
+				return " Shotgun is more powerful near the ennemy than far ! It can push players pretty far.\n Turret are placeable everywhere. You can heal your turret by staying next to it ! Turret upgrade when it stays alive.";
+			if (kit == "teamlord")
+				return " The CrossBoom can be charged while holding the shoot button to have a bigger shoot power, but it will be innacurate for a short period of time after a shot.\n The more there are allies near of you, the more you have a boost defense and the more they have a better firerate.";
+			if (kit == "constructor")
+				return " The grenade launcher and mine can also be activated by the allies!\n The Proximity Mine can be useful when pre-defending the checkpoints";
+			return "???";
+		}
+		
+		main()
+		{
+			FrameOK <=> (Page.GetFirstChild("FrameOK") as CMlFrame);
+			declare MainFrame <=> (Page.GetFirstChild("ClassSelector") as CMlFrame);
+			declare ConfirmQuad <=> (Page.GetFirstChild("ConfirmSelection") as CMlQuad);
+			
+			declare ClassSelectionIsOpen for LocalUser = False;
+			declare ClassSelectionIsOpenWithAgEMenu for LocalUser = False;
+			
+			for (i, 1, 9)
+			{
+				declare frame <=> (Page.GetFirstChild("FrameClass_" ^ i) as CMlFrame);
+				declare labelKitName for frame <=> (frame.GetFirstChild("LabelKitName") as CMlLabel);
+				declare labelKitTaken for frame <=> (frame.GetFirstChild("LabelKitTaken") as CMlLabel);
+				declare quadIsSelected for frame <=> (frame.GetFirstChild("QuadIsSelected") as CMlQuad);
+				declare quadIcon for frame <=> (frame.GetFirstChild("QuadKitIcon") as CMlQuad);
+				
+				if (i == 1) { labelKitName.Value = "soldier"; quadIcon.ImageUrl ^= "soldier.png"; }
+				if (i == 2) { labelKitName.Value = "ninja"; quadIcon.ImageUrl ^= "ninja.png"; }
+				if (i == 3) { labelKitName.Value = "pyro"; quadIcon.ImageUrl ^= "pyro.png"; }
+				if (i == 4) { labelKitName.Value = "engineer"; quadIcon.ImageUrl ^= "engineer.png"; }
+				if (i == 5) { labelKitName.Value = "sniper"; quadIcon.ImageUrl ^= "sniper.png"; }
+				if (i == 6) { labelKitName.Value = "grenadier"; quadIcon.ImageUrl ^= "constructor.png"; }
+				if (i == 7) { labelKitName.Value = "medic"; quadIcon.ImageUrl ^= "medic.png"; }
+				if (i == 8) { labelKitName.Value = "warlord"; quadIcon.ImageUrl ^= "warlord.png"; }
+				if (i == 9) { labelKitName.Value = "mage"; quadIcon.ImageUrl ^= "mage.png"; }
+				
+				declare originalKit for frame = labelKitName.Value;
+				if (i == 6)
+					originalKit = "constructor";
+				if (i == 8)
+					originalKit = "teamlord";
+				
+				if (i <= 9)
+				{
+					quadIsSelected.ModulateColor = <0.1, 0.7, 0.1>;
+				}
+				if (i <= 6)
+				{
+					quadIsSelected.ModulateColor = <0.7, 0.1, 0.1>;
+				}
+				if (i <= 3)
+				{
+					quadIsSelected.ModulateColor = <0.1, 0.1, 0.7>;
+				}
+				
+				ClassFrames.add(frame);
+			}
+			
+			declare netwrite Net_playerWantedKit for UI = "soldier";
+			
+			declare Label_DescriptionShoot <=> (Page.GetFirstChild("Label_DescriptionShoot") as CMlLabel);
+			declare Label_DescriptionAction1 <=> (Page.GetFirstChild("Label_DescriptionAction1") as CMlLabel);
+			declare Label_DescriptionAction2 <=> (Page.GetFirstChild("Label_DescriptionAction2") as CMlLabel);
+			declare Label_DescriptionWarning <=> (Page.GetFirstChild("Label_DescriptionWarning") as CMlLabel);
+			declare Label_DescClassName <=> (Page.GetFirstChild("Label_DescClassName") as CMlLabel);
+			
+			while(True)
+			{
+				yield;
+				
+				MainFrame.Visible = ClassSelectionIsOpen || ClassSelectionIsOpenWithAgEMenu;
+				
+				declare ActivePlayer <=> InputPlayer;
+				if (GUIPlayer != Null)
+					ActivePlayer <=> GUIPlayer;
+					
+				if (!ClassSelectionIsOpenWithAgEMenu)
+				{
+					FrameOK.Show();
+					if (ConfirmQuad.IsFocused)
+						ConfirmQuad.BgColor = <0.2, 0.2, 0.2>;
+					else
+						ConfirmQuad.BgColor = <0., 0., 0.>;
+				}
+				else
+				{
+					FrameOK.Hide();
+				}
+				
+				if (ClassSelectionIsOpen)
+				{
+					ClientUI.UISequence = CUIConfig::EUISequence::UIInteraction;
+				}
+				else
+				{
+					ClientUI.UISequence = CUIConfig::EUISequence::None;
+				}
+				
+				if (Net_playerWantedKit != "")
+				{
+					Label_DescriptionShoot.Value = GetDescShoot(Net_playerWantedKit);
+					Label_DescriptionAction1.Value = GetDescAction1(Net_playerWantedKit);
+					Label_DescriptionAction2.Value = GetDescAction2(Net_playerWantedKit);
+					Label_DescriptionWarning.Value = GetDescWarning(Net_playerWantedKit);
+					Label_DescClassName.Value = Net_playerWantedKit;
+				}
+					
+				foreach (frame in ClassFrames)
+				{
+					declare labelKitTaken for frame = CMlLabel;
+					declare quadIsSelected for frame = CMlQuad;
+
+					declare originalKit for frame = "";
+
+					if (Net_playerWantedKit != originalKit)
+					{
+						if (quadIsSelected.IsFocused)
+						{
+							quadIsSelected.Opacity = 0.5;
+						}
+						else
+						{
+							quadIsSelected.Opacity = 0.;
+						}
+					}
+					else
+					{
+						quadIsSelected.Opacity = 1.0;
+					}
+					
+					declare counter = 0;
+					foreach (player in Players)
+					{
+						if (player.CurrentClan == ActivePlayer.CurrentClan)
+						{
+							declare netread Net_playerMayChooseThisKit for player = "";
+							if (Net_playerMayChooseThisKit == originalKit)
+								counter += 1;
+						}
+					}
+					
+					labelKitTaken.Value = "" ^ counter;
+				}
+				
+				if (IsKeyPressed(53))
+				{
+					for (i, 2, 10)
+					{
+						if (IsKeyPressed(i))
+						{
+							declare originalKit for ClassFrames[i - 2] = "";
+							Net_playerWantedKit = originalKit;
+							
+							ClientUI.SendChat("AGE: You'll get $t" ^ originalKit ^ "$t for the next respawn!");
+							ClientUI.SendNotice("You'll get $t" ^ originalKit ^ "$t for the next respawn!", CUIConfig::ENoticeLevel::MatchWarning, LocalUser, CUIConfig::EAvatarVariant::Default, CUIConfig::EUISound::Bonus, 1);
+						}
+					}
+				}
+				
+				foreach (event in PendingEvents)
+				{
+					if (event.Type == CMlScriptEvent::Type::KeyPress)
+					{
+						if (event.KeyName == "K")
+						{
+							ClassSelectionIsOpen = !ClassSelectionIsOpen;
+						}
+					}
+					if (event.Type == CMlEvent::Type::MouseClick)
+					{
+						declare control <=> event.Control;
+						if (control.ControlId == "QuadIsSelected")
+						{
+							declare originalKit for event.Control.Parent = "";
+							if (originalKit != "pyro")
+								Net_playerWantedKit = originalKit;
+						}		
+						if (control.ControlId == "ConfirmSelection")
+						{
+							ClassSelectionIsOpen = False;
+						}		
+					}
+				}
+			}
+		}
+	--></script>
+	</manialink>
+	""";
+}
+
+Void Load()
+{
+	if (!Layers2::Exists(C_MainLayerName))
+		Layers2::Create(C_MainLayerName);
+	
+	Layers2::Update(C_MainLayerName, GetMainLayer());
+}
+
+
+Void Loop()
+{
+	Layers2::Attach(C_MainLayerName);
+}

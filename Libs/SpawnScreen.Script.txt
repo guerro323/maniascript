@@ -1,0 +1,127 @@
+/**
+ * Message library
+ */
+#Include "Libs/Nadeo/Layers2.Script.txt" as Layers2
+
+#Const Version		"2017-05-22"
+#Const ScriptName	"Libs/Stormium/SpawnScreen.Script.txt"
+
+#Const C_SpawnScreenLayerName "CSpawnScreen.Main"
+
+declare Text G_ModeName;
+declare Text G_GoalDescription;
+declare Text G_Description;
+declare Text G_ScoreManialink;
+
+Void SetName(Text name)
+{
+	G_ModeName = name;
+}
+
+Void SetGoal(Text goalDesc)
+{
+	G_GoalDescription = goalDesc;
+}
+
+Void SetDescription(Text desc)
+{
+	G_Description = desc;
+}
+
+Void SetScoreManialink(Text scoreManialink)
+{
+	G_ScoreManialink = scoreManialink;
+}
+
+Text GetLayer()
+{
+	return """
+	<manialink version="3">
+		<frame z-index="1000">
+			<label pos="0 75" textcolor="999" text="Welcome to {{{G_ModeName}}}!" textembold="1" halign="center" valign="center2" textsize="20" textfont="Oswald"/>
+			<quad sizen="360 100" bgcolor="222" opacity="0.75" halign="center" valign="center"/>
+			
+			<label pos="-75 -60" text="⏶" halign="center" valign="center" textcolor="999" scale="4.5" />
+			<label pos="-75 -75" text="SCORES" textsize="10" textcolor="999" halign="center" valign="center2" textfont="Oswald"/>
+			<label pos="75 -75" text="RULES AND DESCRIPTION" textsize="10" scale="0.9" textcolor="999" halign="center" valign="center2" textfont="Oswald"/>
+			<quad pos="-75 -65" sizen="90 1.25" halign="center" valign="center" bgcolor="999" />
+			<quad pos="75 -65" sizen="90 1.25" halign="center" valign="center" bgcolor="999" />
+		</frame>
+		<frame id="Frame_Scores" z-index="2000">
+			{{{G_ScoreManialink}}}
+		</frame>
+		<frame id="Frame_Rules" z-index="2000">
+			<label pos="0 41" text="$w{{{G_GoalDescription}}}" opacity="0.85" halign="center" valign="top" textcolor="ccc" textsize="4" scale="0.9" sizen="320 100" textfont="Oswald" />
+			<label pos="0 -6" text="$w{{{G_Description}}}" opacity="0.85" halign="center" valign="top" textcolor="ccc" textsize="4" scale="0.9" sizen="320 100" textfont="Oswald" />
+			<label pos="-150 25" z-index="-1" text="$oGOAL" halign="center" valign="center2" textcolor="000" textsize="12" textfont="Oswald" rot="90"/>
+			<label pos="-150 -25" z-index="-1" text="$oRULES" halign="center" valign="center2" textcolor="000" textsize="12" textfont="Oswald" rot="90"/>
+		</frame>
+		
+		<script><!--
+			#Const C_PosXHidden -360.
+		
+			Real Lerp(Real a, Real b, Real _t)
+			{
+				declare t = _t;
+				if (t > 1.0)
+					t = 1.0;
+					
+				return a*(1-t) + b*t;
+			}
+		
+			main()
+			{
+				declare Frame_Scores <=> (Page.GetFirstChild("Frame_Scores") as CMlFrame);
+				declare Frame_Rules <=> (Page.GetFirstChild("Frame_Rules") as CMlFrame);
+				
+				declare lastTimeDelta = Now;
+				declare TimeDelta = Now + 0.;
+				
+				declare SpawnScreen_RulesAreShown for LocalUser = False;
+				
+				while(True)
+				{
+					yield;
+					
+					TimeDelta = -(lastTimeDelta - Now) / 1000.;
+					lastTimeDelta = Now;
+					
+					if (SpawnScreen_RulesAreShown)
+					{
+						Frame_Scores.RelativePosition_V3.X = Lerp(Frame_Scores.RelativePosition_V3.X, C_PosXHidden, TimeDelta / 0.1);
+						Frame_Rules.RelativePosition_V3.X = Lerp(Frame_Rules.RelativePosition_V3.X, 0., TimeDelta / 0.1);
+					}
+					else
+					{
+						Frame_Scores.RelativePosition_V3.X = Lerp(Frame_Scores.RelativePosition_V3.X, 0., TimeDelta / 0.1);
+						Frame_Rules.RelativePosition_V3.X = Lerp(Frame_Rules.RelativePosition_V3.X, -C_PosXHidden, TimeDelta / 0.1);
+					}
+					
+					foreach (event in PendingEvents)
+					{
+						if (event.Type == CMlEvent::Type::KeyPress)
+						{
+							if (event.KeyName == "F1")
+								SpawnScreen_RulesAreShown = !SpawnScreen_RulesAreShown;
+						}
+					}
+				}
+			}
+		--></script>
+	</manialink>
+	""";
+}
+
+Void Reload()
+{
+	if (!Layers2::Exists(C_SpawnScreenLayerName))
+		Layers2::Create(C_SpawnScreenLayerName);
+	
+	Layers2::Update(C_SpawnScreenLayerName, GetLayer());
+	Layers2::SetType(C_SpawnScreenLayerName, CUILayer::EUILayerType::ScreenIn3d);
+}
+
+Void Loop()
+{
+	Layers2::Attach(C_SpawnScreenLayerName);
+}

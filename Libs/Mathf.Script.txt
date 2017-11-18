@@ -1,0 +1,112 @@
+#Include "MathLib" as MathLib
+
+Real Clamp(Real _value, Real min, Real max)
+{
+	declare value = _value;
+
+	if (value < min)
+		value = min;
+	else if (value > max)
+		value = max;
+	return value;
+}
+
+Real Repeat(Real t, Real length)
+{
+	return Clamp(t - MathLib::FloorInteger(t / length) * length, 0.0, length);
+}
+
+Real PingPong(Real t, Real length)
+{
+	declare _t = Repeat(t, length * 2);
+	return length - MathLib::Abs(_t - length);
+}
+
+Real LerpReal(Real a, Real b, Real _t)
+{
+	declare t = _t;
+	if (t > 1.)
+		t = 1.;
+
+	return a * (1 - t) + b * t;
+}
+
+Real Vector3_Magnitude(Vec3 vector)
+{
+	return MathLib::Sqrt(vector.X * vector.X + vector.Y * vector.Y + vector.Z * vector.Z);
+}
+
+Vec3 Vector3_Normalize(Vec3 value)
+{
+	declare num = Vector3_Magnitude(value);
+	declare Vec3 result;
+	if (num > 1E-05)
+	{
+		result.X = value.X / num;
+		result.Y = value.Y / num;
+		result.Z = value.Z / num;
+	}
+	else
+	{
+		result = Vec3;
+	}
+	return result;
+}
+
+Text ManialinkIntegration()
+{
+	return """
+Real Clamp(Real _value, Real min, Real max)
+{
+	declare value = _value;
+
+	if (value < min)
+		value = min;
+	else if (value > max)
+		value = max;
+	return value;
+}
+
+Real Repeat(Real t, Real length)
+{
+	return Clamp(t - MathLib::FloorInteger(t / length) * length, 0.0, length);
+}
+
+Real PingPong(Real t, Real length)
+{
+	declare _t = Repeat(t, length * 2);
+	return length - MathLib::Abs(_t - length);
+}	
+
+Real LerpReal(Real a, Real b, Real _t)
+{
+	declare t = _t;
+	if (t > 1.)
+		t = 1.;
+
+	return a * (1 - t) + b * t;
+}
+
+Real Vector3_Magnitude(Vec3 vector)
+{
+	return MathLib::Sqrt(vector.X * vector.X + vector.Y * vector.Y + vector.Z * vector.Z);
+}
+
+Vec3 Vector3_Normalize(Vec3 value)
+{
+	declare num = Vector3_Magnitude(value);
+	declare Vec3 result;
+	if (num > 1E-05)
+	{
+		result.X = value.X / num;
+		result.Y = value.Y / num;
+		result.Z = value.Z / num;
+	}
+	else
+	{
+		result = Vec3;
+	}
+	return result;
+}
+	""";
+}

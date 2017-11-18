@@ -1,0 +1,28 @@
+#Include "MathLib" as ML
+
+#Const C_TeamLordDefenseBonus 0.25
+
+Integer GetLordEnergyBuff()
+{
+	declare buff = 0;
+	declare megabuff = 1;
+	foreach (player in Players)
+	{
+		declare playerKit for player = "";
+		if (playerKit == "teamlord" && ML::Distance(player.Position, Owner.Position) < 15
+		&& player.CurrentClan == Owner.CurrentClan)
+		{
+			buff += 5;
+			declare MegaBuffTime for player = 0;
+			if (MegaBuffTime > Now)
+			{
+				megabuff += 1;
+			}
+		}
+	}
+	return buff * megabuff;
+}
+
+Void OK()
+{
+}
