@@ -15,6 +15,7 @@
 #Include "Libs/Nadeo/ShootMania/Score.Script.txt" as Score
 #Include "Libs/Stormium/SpawnScreen.Script.txt" as StormiumSS
 #Include "Libs/Stormium/Interface.Script.txt" as StormiumIT
+#Include "Libs/Stormium/InterfaceClassSelector.Script.txt" as StormiumITCS
 #Include "Libs/Nadeo/ScoresTable2.Script.txt" as ST2
 #Include "Libs/Stormium/Kits.Script.txt" as Kits
 
@@ -28,6 +29,9 @@
 #Const EGameState_Starting 	0
 #Const EGameState_InPlay 	1
 
+#Setting S_CoeffTimeLimitCaptureCheckpointAutoTeamBalanceVote 1.2 as _("Time to capture a CP * this coeff (same coeff to rush check)")
+#Setting S_TimeToVoteBalance 60000
+#Setting S_RatioToValideVoteBalance 0.55 as _("/!\\ 1Yes, 1No, 1other => 2/1No = Vote valide")
 #Setting S_TimeToCaptureCheckpoint 60 as _("Time to capture a checkpoint (s)")
 #Setting S_MultiPlayerFasterCap True as _("Allow faster capture")
 #Setting S_EndTime				5	as _("Time to finish a round (minute)")
@@ -37,9 +41,12 @@
 #Setting S_RushTimeGateDuration	15000 as _("Waiting time to wait for gates to open")
 #Setting S_TimeSelectionTime			15 as _("Time to wait before match start")
 #Setting S_RequiredPlayers				2
-#Setting S_MaxRounds 4
+#Setting S_MaxRounds 3
 #Setting S_BotBlue	0
 #Setting S_BotRed		0
+#Setting S_AutoManageAFK False
+#Setting S_AFKIdleTimeLimit 60000 as _("In millisecond")
+#Setting S_AFKSpawnSelectTimeLimit 120000 as _("In millisecond")
 
 /// <summary>
 /// Current Attacking clan.
@@ -70,14 +77,33 @@ declare Integer OvertimeEndTime;
 declare Integer[Integer] RangedProgression;
 declare Integer LastTimeBalance;
 
+//< Balancing stuff by ProInfo (provalinf github)
+declare Boolean BalancingIsRequired;
+declare Integer BalanceType;	// 1:Ranks, 2:Scores
+declare Integer TimeStartVote;
+declare Text PlayerNameRequestVoting;
+declare Text[][] VoteBalanceResult;
+declare Boolean AutoServerStartVoteBalance;
+declare Real MapMinTime;
+declare Integer StartPrevMapTime;
+
+declare CSmPlayer[] spectatorList;
+declare Boolean antiBugMapStartRequestedClan;
+//>
+
 ***Match_StartServer***
 ***
+	AFK::SetIdleTimeLimit(S_AFKIdleTimeLimit);
+	AutoServerStartVoteBalance = False;
+	BalanceType = 2;	// Type de vote par défaut si aucun vote entre temps pour l'AutoServerStartVoteBalance
+
 	AttackingClan = MathLib::Rand(1, 2);
 	
 	Layers::Create("CGame.SpawnInterface", layer_GetSpawnInterface());
 	Layers::Create("CGame.GateMarkers", layer_GetGateMarkers());
 	Layers::Create("CGame.GoalMarkers", layer_GetGoalMarkers());
 	Layers::Create("CGame.Overtime", layer_GetOvertime());
+	Layers::Create("CGame.Balance", layer_GetBalance());
 	
 	Layers::SetType("CGame.GateMarkers", CUILayer::EUILayerType::Markers);
 	Layers::SetType("CGame.GoalMarkers", CUILayer::EUILayerType::Markers);
@@ -97,18 +123,13 @@ declare Integer LastTimeBalance;
 	UIManager.UIAll.NoticesFilter_HideMapInfo = True;
 	UIManager.UIAll.NoticesFilter_LevelToShowAsBigMessage = CUIConfig::ENoticeLevel::MatchInfo;
 	
-	StormiumSS::SetName("AgE");
+	StormiumSS::SetName("AGE");
 	StormiumSS::SetGoal("""Attackers must capture the 2 Checkpoints (STORMIUM Containers) UNDER 5 MINUTES.
-If they succed, they win 1 points. If they don't, Defenders win 1 point.
-If they succed they will have to rush to the goal UNDER 30 SECONDS to get a SECOND POINT.
-The team with a number of 6 points win.""");
-	StormiumSS::SetDescription("""► In attack or defense, you can choose among 5 kits ! 
-You have a main weapon + other weapons/actions.
-
-► In each game, 2 players are selected randomly to be the $0dd❄King of Cryo$fff (in Attackers team),
-and the $e80🔥 King of Meteor$fff (in Defenders team).
-They have a great power thanks to STORMIUM ! 
-They have 300HP and mass destruction weapons !""");
+If they don't succeed, Defenders win 1 point.
+If they succeed they will have to rush to the goal UNDER 60 SECONDS to get a point.
+The team who won a defense and an attack round in a streak win the map!""");
+	StormiumSS::SetDescription("""► In attack or defense, you can choose among 9 kits ! 
+You have a main weapon + other weapons/actions.""");
 	StormiumSS::SetScoreManialink(GetScoreManialink());
 	StormiumIT::Load(StormiumIT::C_ModeAgE);
 	StormiumIT::ShowCustomCoutdown(True);
@@ -116,8 +137,12 @@ They have 300HP and mass destruction weapons !""");
 	StormiumIT::ShowCustomMarkers(True);
 	StormiumIT::SetActive(True);
 	
+	StormiumITCS::Load();
+	
 	UIManager.UIAll.TeamLabelsShowNames = CUIConfig::EVisibility::ForcedHidden;
 	UIManager.UIAll.OpposingTeamLabelsShowNames = CUIConfig::EVisibility::ForcedHidden;
+	
+	RefreshVoteBalance();
 ***
 
 ***MB_Private_Settings***
@@ -180,11 +205,16 @@ They have 300HP and mass destruction weapons !""");
 	
 	Layers::Update("CGame.SpawnInterface", layer_GetSpawnInterface());
 	
+	BalanceStart();
+	
 	StartTime = Now;
+	
+	// quick dirty fix
+	antiBugMapStartRequestedClan = True;
 	
 	UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing;
 	
-	BalanceTeams();
+	BalanceTeams(1);
 	
 	Message::SetDefaultStatusMessage("");
 	
@@ -204,17 +234,14 @@ They have 300HP and mass destruction weapons !""");
 		UIManager.UIAll.BigMessage = "Multiple gates ranges warning!";
 		UIManager.UIAll.StatusMessage = "The first team who win the attack wins the map!";
 		
-		MB_Sleep(5000);
+		MB_Sleep(2500);
 	}
+	
+	log("hi");
 ***
 
 ***Match_StartRound***
 ***
-	if (MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2)) > 1)
-	{
-		BalanceTeams();
-	}
-
 	UIManager.UIAll.TeamLabelsVisibility = CUIConfig::ELabelsVisibility::Never ;
 	UIManager.UIAll.OpposingTeamLabelsVisibility = CUIConfig::ELabelsVisibility::Never ;
 
@@ -318,13 +345,11 @@ They have 300HP and mass destruction weapons !""");
 
 ***OnNewPlayer***
 ***
-	declare respawnTime for Player = Now;
-	SetPlayerClan(Player, GetTeam());
-	declare PlayerClan for Player = Player.CurrentClan;
-	PlayerClan = Player.CurrentClan;
-	
-	SendSrvMessage(Player.Login, "GoRespawnScreen");
-	SendSrvMessage(player.Login, "SetPlayerClan", PlayerClan);
+	// Debug -- Start
+	/*log("Connexion de "^Player.User.Id);*/
+	//log("Nouveau joueur "^Player.User.Login^", redirigé vers l'équipe n°"^dispatchNewOrSpectPlayerClan(Player));
+	// Debug -- End
+	SetPlayerClan(Player, dispatchNewOrSpectPlayerClan(Player));
 ***
 
 ***Match_Yield***
@@ -334,22 +359,21 @@ They have 300HP and mass destruction weapons !""");
 	Message::Loop();
 	StormiumSS::Loop();
 	StormiumIT::Loop();
+	StormiumITCS::Loop();
 	
 	Layers::Attach("CGame.GateMarkers");
 	Layers::Attach("CGame.GoalMarkers");
 	Layers::Attach("CGame.Overtime");
 	Layers::Attach("CGame.SpawnInterface");
+	Layers::Attach("CGame.Balance");
 ***
 
 ***Match_PlayLoop***
 ***	
 	declare netwrite Net_MatchStartTime for Teams[0] = 0;
 	Net_MatchStartTime = MatchStartTime;
-
-	/*if (LastTimeBalance + 3000 < Now && MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2)) > 1)
-	{
-		BalanceTeams();
-	}*/
+	
+	RefreshVoteBalance();
 
 	foreach (e in PendingEvents)
 	{
@@ -374,39 +398,72 @@ They have 300HP and mass destruction weapons !""");
 			+++OnActionCustomEvent+++
 		}
 	}
+	
+	foreach (player in AllPlayers) {
+		if (!player.User.IsFakeUser && !player.IsBot)
+			if (player != Null) {
+				declare flag1 = Players.exists(player);
+				declare flag2 = Spectators.exists(player);
+				
+				declare isSpectator for player = False;
+				if (flag1 && isSpectator) {
+					isSpectator = False;
+					// Passage de spectateur à joueur
+					//spectatorList.remove(player);
+					declare Integer PlayerClan for player;
+					PlayerClan = dispatchNewOrSpectPlayerClan(player);
+					declare TempoPlayerRequestedClan for player = 0;
+					TempoPlayerRequestedClan = Now;
+					UnspawnPlayer(player);
+					SetPlayerClan(player, PlayerClan);	// Important également si le round n'est pas actif
+					log("Joueur "^player.User.Login^", redirigé vers l'équipe n°"^PlayerClan);
+				} else if (!flag1 && !isSpectator) {
+					isSpectator = True;
+				}
+		}
+	}
+	
+	// quick dirty fix
+	declare antiBugRequestedClan = True;
 
 	foreach (player in Players)
 	{
 		player.Stamina += 1;
-	
+		if (Kits::GetPlayerKit(player) == "soldier")
+			player.Stamina += 2;
+		
+		declare Integer AFKatSelectSpawn for player = Now;
+
 		if (player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned)
 		{	
-			declare PlayerClan for player = player.RequestedClan;
-			if (LastTimeBalance + 20000 < Now)
-			{
-				PlayerClan = player.RequestedClan;
+			if (StartTime > AFKatSelectSpawn) AFKatSelectSpawn = -1;
+			if (AFKatSelectSpawn == -1) {
+				AFKatSelectSpawn = Now;
+			} else if (AFKatSelectSpawn + S_AFKSpawnSelectTimeLimit < Now
+			&& !player.User.IsFakeUser) {
+				Users_RequestSwitchToSpectator(player.User);
+				AFKatSelectSpawn = -1;
 			}
-			/*if (MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2)) <= 2)
-				PlayerClan = player.RequestedClan;
-			if (PlayerClan == 0)
-				PlayerClan = GetTeam();
-				
-			if (MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2)) >= 2)
-				PlayerClan = GetTeam();
+		
+			declare PlayerClan for player = player.RequestedClan;
+			declare TempoPlayerRequestedClan for player = 0;
 			
-				
-			declare oldPlayerClan = player.CurrentClan;
+			// quick dirty fix
 			
-			if (oldPlayerClan != PlayerClan)
+			declare Integer prevPlayerClan for player.User;
+			if (!antiBugMapStartRequestedClan && TempoPlayerRequestedClan + S_AFKSpawnSelectTimeLimit < Now)
+ 				PlayerClan = player.RequestedClan;
+			else if (prevPlayerClan != 0 && prevPlayerClan != player.RequestedClan && !player.User.IsFakeUser && !player.IsBot)
 			{
-				declare UI <=> UIManager.GetUI(player);
-				if (UI != Null)
-				{
-					UI.SendChat("$999Team notice: $fffYou was redirected to " ^ Teams[PlayerClan - 1].ColorizedName ^ " team"); 
-				}
-			}*/
+				antiBugRequestedClan = False;
+				PlayerClan = prevPlayerClan;
+				log("Res current clan ("^PlayerClan^") for "^player.User.Id);
+			}
+ 			
 				
 			SetPlayerClan(player, PlayerClan);
+			
+			PlayerClan = player.CurrentClan;
 			
 			declare UI <=> UIManager.GetUI(player);
 			declare netread Net_playerWantRespawn for UI = False;
@@ -436,23 +493,35 @@ They have 300HP and mass destruction weapons !""");
 				if (spawn != Null && (IsValidSpawn(spawn, player) || player.User.IsFakeUser))
 				{
 					player.ArmorMax = 10000;
-					player.Armor = player.ArmorMax;
+					player.Armor = 100;
 					
 					SendSrvMessage(player.Login, "GoRespawnScreen");
 					
-					Kits::SetKit(player, Net_playerWantedKit);
+					if (!player.User.IsFakeUser)
+						Kits::SetKit(player, Net_playerWantedKit);
+					else
+						Kits::SetKit(player, "soldier");
 					
 					declare respawnTime for player = Now;
 					SM::SpawnPlayer(player, player.CurrentClan, player.Armor, spawn.PlayerSpawn, Now);
-					
-					/*if (player.User.IsFakeUser)
-						player.Armor = 100;*/
 				}
 			}
 		} 
-		/*else
-			Layers::Detach("CGame.SpawnInterface", player);*/
+		else
+		{
+			AFKatSelectSpawn = -1;
+			if (get_IsFinalGoal)
+			{
+				if (player.CurrentClan == AttackingClan)
+					player.Armor += 2;
+				else
+					player.Armor += 6;
+			}
+		}
 	}
+	
+	// quick dirty fix
+	if (antiBugRequestedClan) antiBugMapStartRequestedClan = False;
 	
 	declare nbOfCheckpointsCaptured = 0;
 	foreach (clanOrder => order in Checkpoints)
@@ -532,7 +601,9 @@ They have 300HP and mass destruction weapons !""");
 				{
 					declare player <=> Players[playerId];
 					if (player.CurrentClan == AttackingClan)
+					{
 						atkClanPresent = True;
+					}
 					else
 					{
 						defClanPresent = True;
@@ -541,8 +612,19 @@ They have 300HP and mass destruction weapons !""");
 				}
 			}
 			
-			if (atkClanPresent && lastDefClanStayTime + 250 < Now && goal.Gauge.Speed == 0)
+			if (atkClanPresent && lastDefClanStayTime + 750 < Now && goal.Gauge.Speed == 0)
 			{
+				foreach (playerId in goal.Sector.PlayersIds)
+				{
+					if (Players.existskey(playerId))
+					{
+						declare player <=> Players[playerId];
+						if (player.CurrentClan == AttackingClan)
+						{
+							Score::AddPoints(player, 5000);
+						}
+					}
+				}
 				foreach (player in Players)
 					player.SpeedPower = 0.1;
 				Message::SendBigMessage("Victory for " ^ Teams[AttackingClan - 1].ColorizedName ^ "!", 6000, 10);
@@ -739,6 +821,14 @@ They have 300HP and mass destruction weapons !""");
 
 ***Match_EndMap***
 ***
+	// quick dirty fix
+	foreach (player in Players) // Spectateur exclus
+	{
+		declare Integer prevPlayerClan for player.User;
+		prevPlayerClan = player.CurrentClan;
+		log("Sav current clan ("^prevPlayerClan^") for "^player.User.Id);
+	}
+
 	if (MapWinner != 0)
 	{
 		if (MapWinner != 3)
@@ -839,7 +929,7 @@ Integer GetTeam()
 
 Void BalanceTeams()
 {
-	LastTimeBalance = Now; 
+	/*LastTimeBalance = Now; 
 	
 	UIManager.UIAll.SendChat("Teams are now balanced in term of size.");
 	foreach (player in Players)
@@ -858,7 +948,7 @@ Void BalanceTeams()
 				UI.SendChat("$999Team notice: $fffYou was redirected to " ^ Teams[PlayerClan - 1].ColorizedName ^ " team"); 
 			}
 		}
-	}
+	}*/
 }
 
 Boolean IsValidSpawn(CSmMapLandmark spawn, CSmPlayer player)
@@ -890,13 +980,37 @@ Integer SpeedValue(CSmMapGauge gauge, CSmPlayer[] players)
 	declare value = 0;
 	foreach (player in players)
 	{
+		declare lastUpdateTimeForScore for player = 0;
 		if (player.CurrentClan == AttackingClan)
 		{
 			declare netwrite Net_IsDisguise for player = False;
 			if (!Net_IsDisguise)
+			{
 				value += 1;
+				
+				if (gauge.Value != gauge.Max)
+				{
+					if (lastUpdateTimeForScore < Now)
+					{
+						lastUpdateTimeForScore = Now + 100;
+						Score::AddPoints(player, 3);
+					}
+				}
+			}
 		}
-		else value -= 1;
+		else
+		{ 
+			if (gauge.Value != gauge.Max && value > 0)
+			{
+				if (lastUpdateTimeForScore < Now)
+				{
+					lastUpdateTimeForScore = Now + 100;
+					Score::AddPoints(player, value);
+				}
+			}
+		
+			value -= 1;
+		}
 	}
 	
 	if (value < 0)
@@ -910,6 +1024,136 @@ Integer SpeedValue(CSmMapGauge gauge, CSmPlayer[] players)
 Text MLPos(Vec3 pos)
 {
 	return """{{{pos[0]}}} {{{pos[1]}}} {{{pos[2]}}}""";
+}
+
+Text layer_GetBalance()
+{
+	return """
+	<manialink version="3">
+		<!-- Panneau de vote -->
+		<frame pos="-124 76" scale="0.8" z-index="2" id="votePane" hidden="0">
+			<label pos="55.8 -0.20" z-index="2" id="LabelVote" size="116 7.6" textprefix="$s" text="xxxx $z$s$fff, requires a balancing of teams according $0D0to xxxx" textsize="2" halign="center" valign="center"/>
+			<label pos="-6 0.5" z-index="2" id="countdown" size="7 7" textprefix="$s" text="60" textsize="0.6" halign="center" valign="center" rot="-40" opacity=".9"/>
+			<label pos="-6.6 0.6" z-index="2" text=" " halign="center" valign="center" textsize="3.2" opacity=".6"/>
+			<quad pos="-8.9 3.53" z-index="-1" size="126 18.7" style="Bgs1" substyle="BgButtonGrayed" opacity=".0"/>
+			<quad pos="-8.9 3.53" z-index="0" size="126 18.7" style="BgsPlayerCard" substyle="ProgressBar" opacity=".6" colorize="000"/>
+			<quad pos="54.1 -0.27" z-index="1" size="126 7.6" style="BgsPlayerCard" substyle="ProgressBar" opacity=".6" colorize="000" halign="center" valign="center"/>
+			
+			<frame pos="0 0" z-index="1" id="voteYes">
+			<!--<label pos="14 -9.5" z-index="2" size="30 7.6" textprefix="$s" text="Yes [F3] - 00" textsize="2" halign="center" valign="center" opacity=".4"/>-->
+			<label pos="12 -9.5" z-index="2" size="30 7.6" textprefix="$s$0d0" text="Yes $fff[F3] - " textsize="2" halign="center" valign="center"/>
+			<label pos="22.5 -9.5" z-index="2" id="LabelVoteNbYes" size="12 7.6" textprefix="$s" text="0" textsize="2" halign="center" valign="center"/>
+			<quad pos="14 -9.5" z-index="1" size="30 7.6" id="QuadBgVoteYes" style="BgsPlayerCard" substyle="ProgressBar" opacity=".6" colorize="000" halign="center" valign="center"/>
+			</frame>
+			
+			<frame pos="40 0" z-index="1" id="voteNo">
+			<!--<label pos="14 -9.5" z-index="2" size="30 7.6" textprefix="$s" text="No [F4] - 00" textsize="2" halign="center" valign="center" opacity=".4"/>-->
+			<label pos="12 -9.5" z-index="2" size="30 7.6" textprefix="$s$e00" text="No $fff[F4] - " textsize="2" halign="center" valign="center"/>
+			<label pos="22 -9.5" z-index="2" id="LabelVoteNbNo" size="12 7.6" textprefix="$s" text="0" textsize="2" halign="center" valign="center"/>
+			<quad pos="14 -9.5" z-index="1" size="30 7.6" id="QuadBgVoteNo" style="BgsPlayerCard" substyle="ProgressBar" opacity=".6" colorize="000" halign="center" valign="center"/>
+			</frame>
+			
+			<frame pos="80 0" z-index="1" id="voteScore">
+			<!--<label pos="14 -9.5" z-index="2" size="36 7.6" textprefix="$s" text="To scores [F5] - 00" textsize="2" halign="center" valign="center" opacity=".4"/>-->
+			<label pos="12 -9.5" z-index="2" size="36 7.6" textprefix="$s$f90" text="To scores $fff[F5] - " textsize="2" halign="center" valign="center" />
+			<label pos="27.6 -9.5" z-index="2" id="LabelVoteNbOther" size="12 7.6" textprefix="$s" text="0" textsize="2" halign="center" valign="center"/>
+			<quad pos="14 -9.5" z-index="1" size="36 7.6" id="QuadBgVoteOther" style="BgsPlayerCard" substyle="ProgressBar" opacity=".6" colorize="000" halign="center" valign="center"/>
+			</frame>
+			
+			<frame pos="80 0" z-index="1" id="voteRank">
+			<!--<label pos="14 -9.5" z-index="2" size="36 7.6" textprefix="$s" text="To ranks [F5] - 00" textsize="2" halign="center" valign="center" opacity=".4"/>-->
+			<label pos="12 -9.5" z-index="2" size="36 7.6" textprefix="$s$f90" text="To ranks $fff[F5] - " textsize="2" halign="center" valign="center" />
+			<label pos="26.8 -9.5" z-index="2" id="LabelVoteNbOther" size="12 7.6" textprefix="$s" text="0" textsize="2" halign="center" valign="center"/>
+			<quad pos="14 -9.5" z-index="1" size="36 7.6" id="QuadBgVoteOther" style="BgsPlayerCard" substyle="ProgressBar" opacity=".6" colorize="000" halign="center" valign="center"/>
+			</frame>
+		</frame>	
+
+		<script><!--
+			Void votePanel(Boolean display) {
+				declare CMlFrame votePane = (Page.GetFirstChild("votePane") as CMlFrame);
+				
+				votePane.Visible = display;
+				if (display) {
+					declare netread Net_VoteBalanceResult2 for Teams[0] = [Text[],Text[],Text[]];
+					
+					declare netread Net_PlayerNameRequestVoting for Teams[0] = Text;
+					declare netread Net_BalanceType for Teams[0] = Integer;
+			
+					declare Text BalanceType;
+					declare CMlFrame voteScore = (votePane.GetFirstChild("voteScore") as CMlFrame);
+					declare CMlFrame voteRank = (votePane.GetFirstChild("voteRank") as CMlFrame);
+					declare CMlFrame voteOther;
+					if (Net_BalanceType == 1) {
+						BalanceType = "ranks$fff.";
+						voteRank.Visible = False;
+						voteScore.Visible = True;
+						voteOther <=> voteScore;
+					} else {
+						BalanceType = "scores$fff.";
+						voteRank.Visible = True;
+						voteScore.Visible = False;
+						voteOther <=> voteRank;
+					}
+					
+					declare CMlLabel countdown = (votePane.GetFirstChild("countdown") as CMlLabel);
+					declare netread Net_CountdownVoteBalance for Teams[0] = Text;
+					countdown.Value = Net_CountdownVoteBalance;
+					
+					declare CMlLabel LabelVote = (Page.GetFirstChild("LabelVote") as CMlLabel);
+					LabelVote.Value = Net_PlayerNameRequestVoting^"$z$s$fff, requires a balancing of teams according $0D0to "^BalanceType;
+					declare CMlLabel LabelVoteNbYes = (votePane.GetFirstChild("LabelVoteNbYes") as CMlLabel);
+					declare CMlQuad QuadBgVoteYes = (votePane.GetFirstChild("QuadBgVoteYes") as CMlQuad);
+					declare CMlLabel LabelVoteNbNo = (votePane.GetFirstChild("LabelVoteNbNo") as CMlLabel);
+					declare CMlQuad QuadBgVoteNo = (votePane.GetFirstChild("QuadBgVoteNo") as CMlQuad);
+					declare CMlLabel LabelVoteNbOther = (voteOther.GetFirstChild("LabelVoteNbOther") as CMlLabel);
+					declare CMlQuad QuadBgVoteOther = (voteOther.GetFirstChild("QuadBgVoteOther") as CMlQuad);
+					
+					declare LabelNbVote = [LabelVoteNbYes, LabelVoteNbNo, LabelVoteNbOther];
+					declare QuadBgVote = [QuadBgVoteYes, QuadBgVoteNo, QuadBgVoteOther];
+					foreach (key => option in Net_VoteBalanceResult2) {
+						if (option.exists(LocalUser.Login)) {
+							LabelNbVote[key].Value = "$0a0"^option.count;
+							QuadBgVote[key].Colorize = <.2, 1., .2>;
+						} else {
+							LabelNbVote[key].Value = "$fff"^option.count;
+							QuadBgVote[key].Colorize = <0., 0., 0.>;
+						}
+					}
+				}
+				
+			}
+			
+			main()
+			{
+				while(True)
+				{
+					yield;
+				
+					declare netread Net_BalancingIsRequired for Teams[0] = False;
+					
+					foreach (event in PendingEvents)
+					{
+						if (event.Type == CMlScriptEvent::Type::KeyPress) {
+							if (Net_BalancingIsRequired) {
+								declare netwrite Net_PlayerVote for UI = 0;
+								if (event.KeyName == "F3") {
+									Net_PlayerVote += 1;
+								} else if (event.KeyName == "F4") {
+									Net_PlayerVote += 2;
+								} else if (event.KeyName == "F5") {
+									Net_PlayerVote += 3;
+								}
+							}
+							
+						}
+					}
+
+					votePanel(Net_BalancingIsRequired);
+				}
+			}
+		--></script>
+	</manialink>
+	""";
 }
 
 Text layer_GetSpawnInterface()
@@ -926,10 +1170,27 @@ Text layer_GetSpawnInterface()
 	
 	return """
 	<manialink version="2">
+	<frame id="MainSelection" posn="0 0 99999">
+		<quad posn="0 16 100" halign="center" valign="center" sizen="60 20.25" style="Bgs1InRace" substyle="BgGradTop"/>
+		<quad posn="0 -16 100" halign="center" valign="center" sizen="60 20.25" style="Bgs1InRace" substyle="BgGradBottom"/>
+		<frame posn="-60 0 10" scale="1" id="FrameViewReady" hidden="1">
+			<label posn="0 0 10" textfont="Oswald" halign="center" valign="center2" sizen="60 20" text="Spawn Selection (L)" textsize="4" />
+			<quad posn="0 0" halign="center" valign="center" bgcolor="222" bgcolorfocus="333" scriptevents="1" sizen="60 20" id="setSpawnSelection"/>
+		</frame>	
+		<frame posn="0 16" scale="1" id="FrameViewReady">
+			<label posn="0 0 10" textfont="Oswald" halign="center" valign="center2" sizen="60 20" text="GO (F6)" textsize="4" />
+			<quad posn="0 0" halign="center" valign="center" bgcolor="222" scriptevents="1" sizen="60 20" id="setReady"/>
+		</frame>	
+		<frame posn="0 -16" scale="1" id="FrameViewReady">
+			<label posn="0 0 10" textfont="Oswald" halign="center" valign="center2" sizen="80 20" text="Kit Selection (K)" textsize="4" />
+			<quad posn="0 0" halign="center" valign="center" bgcolor="222" scriptevents="1" bgcolorfocus="333" sizen="60 20" id="setClassSelection"/>
+		</frame>	
+	</frame>
+	
 		<framemodel id="fm_Class">
 			<label {{{CC}}} posn="-22.5 0 2" id="Label_Icon" text=""/>
-			<quad posn="0 -8 1" id="Quad_Selected" style="BgRaceScore2" rot="-90" substyle="CartoucheLine" halign="left" valign="center" sizen="16 60" colorize="0f0"/>
-			<label textfont="Oswald" id="Label_SelectClass" scriptevents="1" posn="0 0 0" halign="center" valign="center" text="SOLDIER" sizen="60 15" textsize="4" />
+			<quad posn="0 -6.5 1" id="Quad_Selected" style="BgRaceScore2" rot="-90" substyle="CartoucheLine" halign="left" valign="center" sizen="13 60" colorize="0f0"/>
+			<label textfont="Oswald" id="Label_SelectClass" scriptevents="1" posn="0 0 0" halign="center" valign="center" text="SOLDIER" sizen="60 12" textsize="4" />
 			<label textfont="RajdhaniMono" id="Label_KitCounter" posn="20 0 0" halign="center" valign="center" text="0" sizen="60 15" textsize="4" />
 		</framemodel>
 		<framemodel id="fm_Spawn">
@@ -947,7 +1208,7 @@ Text layer_GetSpawnInterface()
 			<label id="Label_AtkInfo" {{{CC}}} text="You are attacking!" textprefix="$s" textfont="OswaldMono"/>
 		</frame>
 		
-		<frame posn="0 0 10" id="Clip_FrameKitInfo" clipsizen="180 80" clip="1" clipposn="0 0">
+		<frame posn="0 0 10" id="Clip_FrameKitInfo" clipsizen="180 80" clip="1" clipposn="0 0" hidden="1">
 			<frame posn="0 0" id="FrameKitInfo">
 				<label posn="-88 30" halign="left" valign="bottom" textfont="Oswald" textprefix="$t" id="Label_DescClassName" text="Soldier" textsize="8" />
 				<quad posn="-90 30" halign="left" valign="bottom" bgcolor="000" opacity="1" sizen="45 10" />
@@ -981,7 +1242,7 @@ Text layer_GetSpawnInterface()
 			</frame>
 		</frame>
 		
-		<frame posn="0 70" id="FrameViewLogo">
+		<frame posn="0 70" id="FrameViewLogo" hidden="1">
 			<quad posn="0 -10.75" sizen="60 20" halign="center" valign="center" image="https://cdn.discordapp.com/attachments/244514503323025408/316925411625795587/AgeLogo.png" keepratio="Fit" />	
 			<quad posn="0 0 -59" halign="center" valign="center" bgcolor="555" opacity="0.5" sizen="360 40" />	
 		</frame>
@@ -996,33 +1257,25 @@ Text layer_GetSpawnInterface()
 			{{{ml_spawnFrame}}}
 		</frame>
 		
-		<frame posn="130 25" id="FrameViewKits">
+		<frame posn="130 25" id="FrameViewKits" hidden="1">
 			<quad posn="0 -25 -60" style="Bgs1" substyle="BgEmpty" halign="center" valign="center" sizen="75 100" />
 			<label posn="0 32 10" halign="center" valign="center" textfont="Oswald" text="$fff$tSelect your kit" sizen="40 10" scale="1.5" />
 			<quad posn="0 25.5 10" halign="center" valign="center" bgcolor="eee" opacity="1." sizen="60 0.75" />
 			<label posn="0 25.5 10" halign="center" valign="center" textcolor="fff" text="$fff⏷" sizen="40 10" scale="2" />
 			
 			<frame posn="0 -25">
-				<frameinstance modelid="fm_Class" id="Frame_Class1" posn="0 40"/>
-				<frameinstance modelid="fm_Class" id="Frame_Class2" posn="0 24"/>
-				<frameinstance modelid="fm_Class" id="Frame_Class3" posn="0 8"/>
-				<frameinstance modelid="fm_Class" id="Frame_Class4" posn="0 -8"/>
-				<frameinstance modelid="fm_Class" id="Frame_Class5" posn="0 -24"/>
-				<frameinstance modelid="fm_Class" id="Frame_Class6" posn="0 -40"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class1" posn="0 42.5"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class2" posn="0 30"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class3" posn="0 17.5"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class4" posn="0 5"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class5" posn="0 -7.5"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class6" posn="0 -20"/>
+				<frameinstance modelid="fm_Class" id="Frame_Class7" posn="0 -32.5"/>
 			</frame>
-		</frame>
-		
-		<frame posn="0 -75" scale="1" id="FrameViewReady">
-			<quad posn="0 5 -59" halign="center" valign="center" bgcolor="555" opacity="0.5" sizen="360 40" />	
-			<quad posn="0 24.5 10" halign="center" valign="center" bgcolor="eee" opacity="1." sizen="60 1" />
-			<quad posn="0 5.5 10" halign="center" valign="center" bgcolor="eee" opacity="1." sizen="60 1" />
-			<label posn="0 17 10" textfont="Oswald" halign="center" valign="center2" sizen="60 20" text="READY" textsize="8" />
-			<label posn="0 10 10" textfont="Oswald" halign="center" valign="center2" sizen="60 20" text="to spawn" textsize="4" />
-			<quad posn="0 15" halign="center" valign="center" bgcolor="222" scriptevents="1" sizen="60 20" id="setReady"/>
 		</frame>
 	</frame>
 	
-	<label id="Label_MatchStartTime" halign='center' valign='center' posn="0 0 5" textprefix="$s" text="Start in..." textfont="RajdhaniMono" textsize="8"/>
+	<label id="Label_MatchStartTime" halign='center' valign='center' posn="0 0 -5" textprefix="$s" text="Start in..." textfont="RajdhaniMono" textsize="8"/>
 	
 	<label id="labelFps" posn="-160 -60" text="FPS" />
 		
@@ -1036,6 +1289,8 @@ Text layer_GetSpawnInterface()
 			declare CMlFrame[] SpawnsFrame;
 			declare CSmMapLandmark CurrentSelectedSpawn;
 			
+			declare CMlFrame MainSelection;
+			
 			declare CMlFrame FrameViewSpawns;
 			declare CMlFrame FrameViewKits;
 			declare CMlFrame FrameViewReady;
@@ -1043,13 +1298,23 @@ Text layer_GetSpawnInterface()
 			
 			declare CMlLabel Label_AtkInfo;
 			
-			Real Lerp(Real a, Real b, Real t)
+			declare Integer CurrentSelectedState;
+			
+			Real Lerp(Real a, Real b, Real _t)
 			{
+				declare t = _t;
+				if (t > 1.0)
+					t = 1.0;
+			
 				return a*(1-t) + b*t;
 			}
 			
-			Vec3 Lerp(Vec3 a, Vec3 b, Real t)
+			Vec3 Lerp(Vec3 a, Vec3 b, Real _t)
 			{
+				declare t = _t;
+				if (t > 1.0)
+					t = 1.0;
+			
 				declare v1 = a[0]*(1-t) + b[0]*t;
 				declare v2 = a[1]*(1-t) + b[1]*t;
 				declare v3 = a[2]*(1-t) + b[2]*t;
@@ -1111,13 +1376,13 @@ Text layer_GetSpawnInterface()
 						spawn <=> MapLandmarks_PlayerSpawn[i];
 					
 						if (spawn.Tag == "SpawnGoal" && playerClan == Net_AttackingClan)
-							isAvailable = False;
+						{	isAvailable = False; }
 						if (spawn.Tag == "SpawnAttack" && Net_IsFinalGoal)
-							isAvailable = False;
+						{	isAvailable = False; }
 						if (spawn.Tag == "SpawnGoal" && playerClan == 3 - Net_AttackingClan && !Net_IsFinalGoal)
-							isAvailable = False;	
+						{	isAvailable = False; }
 						if (Net_SpawnClan.existskey(i) && Net_SpawnClan[i] != playerClan)
-							isAvailable = False;	
+						{	isAvailable = False; }
 						if (playerClan == 3 - Net_AttackingClan && spawn.Order != Net_CurrentOrder)
 						{
 							isAvailable = False;
@@ -1150,6 +1415,9 @@ Text layer_GetSpawnInterface()
 						spawnPosition = spawn.Position;
 						
 						nameLabel.SetText("$t" ^ spawnName);
+						
+						if (CurrentSelectedSpawn == Null)
+							CurrentSelectedSpawn <=> spawn;
 					}
 				}
 				
@@ -1205,16 +1473,19 @@ Text layer_GetSpawnInterface()
 			Void ManageFramePos(Real deltaTime)
 			{
 				declare netread Net_MatchIsRunning for Teams[0] = False;
+				declare ClassSelectionIsOpen for LocalUser = False;
 			
 				declare goViewKits_pos = <200., 25., 0.>;
 				declare goViewSpawns_pos = <-200., 25., 0.>;
 				declare goTopView_pos = <0., 120., 0.>;
 				declare goBottomView_pos = <0., -120., 0.>;
 				declare goLabelAtkInfo_pos = <0., -60., 0.>;
+				declare goMainSelection_pos = <0., 0., 0.>;
 				if (InputPlayer != Null && InputPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned
-					&& !IsSpectator
-					&& Net_MatchIsRunning)
+					&& !IsSpectator)
 				{
+					ClientUI.UISequence = CUIConfig::EUISequence::UIInteraction;
+				
 					goViewKits_pos = <130., 25., 0.>;
 					goViewSpawns_pos = <-130., 25., 0.>;
 					goTopView_pos = <0., 70., 0.>;
@@ -1224,12 +1495,24 @@ Text layer_GetSpawnInterface()
 						goBottomView_pos = <0., -90., 0.>;
 						
 					goLabelAtkInfo_pos = <0., 40., 0.>;
+					if (ClassSelectionIsOpen)
+					{
+						goMainSelection_pos = <0., -9999., 0.>;
+						goViewSpawns_pos.X = -300.;
+					}
+				}
+				else
+				{
+					ClientUI.UISequence = CUIConfig::EUISequence::None;
+				
+					goMainSelection_pos = <0., -999., 0.>;
 				}
 					
 				FrameViewKits.RelativePosition = Lerp(FrameViewKits.RelativePosition, goViewKits_pos, deltaTime * 10.);
 				FrameViewSpawns.RelativePosition = Lerp(FrameViewSpawns.RelativePosition, goViewSpawns_pos, deltaTime * 10.);
 				FrameViewLogo.RelativePosition = Lerp(FrameViewLogo.RelativePosition, goTopView_pos, deltaTime * 10.);
-				FrameViewReady.RelativePosition = Lerp(FrameViewReady.RelativePosition, goBottomView_pos, deltaTime * 16.);
+				MainSelection.RelativePosition = Lerp(MainSelection.RelativePosition, goMainSelection_pos, deltaTime * 40.);
+				//FrameViewReady.RelativePosition = Lerp(FrameViewReady.RelativePosition, goBottomView_pos, deltaTime * 16.);
 				
 				Label_AtkInfo.RelativePosition = Lerp(Label_AtkInfo.RelativePosition, goLabelAtkInfo_pos, deltaTime * 20.);
 			}
@@ -1245,9 +1528,11 @@ Text layer_GetSpawnInterface()
 				if (kit == "mage")
 					return "BumpHell";
 				if (kit == "medic")
-					return "ADN / MediGun";
+					return "Nanogun / Medigun (Nanogun Field)";
 				if (kit == "engineer")
 					return "Shotgun";
+				if (kit == "teamlord")
+					return "CrossBoom";
 				return "???";
 			}
 			
@@ -1265,6 +1550,8 @@ Text layer_GetSpawnInterface()
 					return "Switch Weapon";
 				if (kit == "engineer")
 					return "Turret";
+				if (kit == "teamlord")
+					return "Mega Buff (not done yet)";
 				return "???";
 			}
 			
@@ -1282,6 +1569,8 @@ Text layer_GetSpawnInterface()
 					return "Boucing Ball (Heal Allies)";
 				if (kit == "engineer")
 					return "Grenade";
+				if (kit == "teamlord")
+					return "Grenade (will use another weapon soon)";
 				return "???";
 			}
 			
@@ -1296,14 +1585,17 @@ Text layer_GetSpawnInterface()
 				if (kit == "mage")
 					return " BumpHell pushes players in the air ! It doesn't make a lot of damages thought.\n Curse gives weakness to the hit player, he takes twice more damages and move slower!\nForcefield create an explosive area around the hit player !";
 				if (kit == "medic")
-					return " ADN isn't very powerful but it is enough to defend yourself.\n MediGun is useful to heal your teammates during the battle! But you can't heal yourself with it.\n The Healing Bouncing Ball is a big ball that heal all your teammates around it !";
+					return " Nanogun can damage ennemies and heal your allies.\n The medigun (or nanogun field) can heal multiple target at the same time, but can't deal damage.\n The Healing Bouncing Ball is a big ball that heal all your teammates around it !";
 				if (kit == "engineer")
 					return " Shotgun is more powerful near the ennemy than far ! It can push players pretty far.\n Turret are placeable everywhere. You can heal your turret by staying next to it ! Turret upgrade when it stays alive.";
+				if (kit == "teamlord")
+					return " The CrossBoom can be charged while holding the shoot button to have a bigger shoot power, but it will be innacurate for a short period of time after a shot.\n The more there are allies near of you, the more you have a boost defense and the more they have a better firerate.";
 				return "???";
 			}
 		
 			main()
 			{				
+				MainSelection <=> (Page.GetFirstChild("MainSelection") as CMlFrame);
 				for (I, 0, 20)
 				{
 					declare frame <=> cast(CMlFrame, Page.GetFirstChild("fi_Spawn("^I^")"));
@@ -1330,7 +1622,7 @@ Text layer_GetSpawnInterface()
 				}
 				
 				declare FrameClasses = CMlFrame[];
-				for (I, 1, 6)
+				for (I, 1, 7)
 				{
 					declare frame <=> (Page.GetFirstChild("Frame_Class" ^ I) as CMlFrame);
 					declare classLabel for frame <=> (frame.GetFirstChild("Label_SelectClass") as CMlLabel);
@@ -1345,6 +1637,7 @@ Text layer_GetSpawnInterface()
 					if (I == 4) { classLabel.Value = "NINJA"; classIcon.Value = "🏃"; }
 					if (I == 5) { classLabel.Value = "ENGINEER"; classIcon.Value = "🔧"; }
 					if (I == 6) { classLabel.Value = "MEDIC"; classIcon.Value = ""; }
+					if (I == 7) { classLabel.Value = "TEAMLORD"; classIcon.Value = ""; }
 					
 					declare originalKit for classLabel = TL::ToLowerCase(classLabel.Value);
 					
@@ -1408,6 +1701,9 @@ Text layer_GetSpawnInterface()
 				
 				declare ClientMarkers for LocalUser = Text[Text];
 				
+				declare ClassSelectionIsOpen for LocalUser = False;
+				CurrentSelectedState = -1;
+				
 				while(True)
 				{
 					yield;
@@ -1435,6 +1731,7 @@ Text layer_GetSpawnInterface()
 					
 					if (LocalUser == Null || InputPlayer == Null)
 					{
+						CurrentSelectedState = -1;
 						FrameKitInfo.RelativePosition = Lerp(FrameKitInfo.RelativePosition, <0., -90., 0.>, TimeDelta * 50.);
 						continue;
 					}
@@ -1447,6 +1744,12 @@ Text layer_GetSpawnInterface()
 						
 					/*MainFrame.Visible = Net_IsFinalGoal || InputPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned;
 					Minimap.Visible = Net_IsFinalGoal || InputPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned;*/	
+					
+					if (!ClassSelectionIsOpen && CurrentSelectedState == 1)
+					{
+						ClassSelectionIsOpen = True;
+						CurrentSelectedState = -1;
+					}
 					
 					if (LocalUser.Language == "fr")
 					{
@@ -1598,8 +1901,26 @@ Text layer_GetSpawnInterface()
 							QuadReady.BgColor = <0.20, 0.15, 0.>;
 					}
 					
+					if (InputPlayer != Null && InputPlayer.SpawnStatus != CSmPlayer::ESpawnStatus::NotSpawned)
+					{
+						CurrentSelectedState = -1;
+					}
+					
 					foreach (event in PendingEvents)
 					{
+						if (event.Type == CMlScriptEvent::Type::KeyPress)
+						{
+							if (event.KeyName == "F6" && InputPlayer.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned
+									&& !IsSpectator)
+							{
+								Net_playerWantRespawn = !Net_playerWantRespawn;
+								
+									if (CurrentSelectedSpawn != Null) {
+										Net_playerLastTime = Now;
+										Net_playerSpawn = MapLandmarks_PlayerSpawn.keyof(CurrentSelectedSpawn);
+									}								
+							}
+						}
 						if (event.Type == CMlEvent::Type::MouseClick)
 						{
 							declare control <=> event.Control;
@@ -1619,6 +1940,8 @@ Text layer_GetSpawnInterface()
 								
 							if (control.ControlId == "setReady")
 							{
+								CurrentSelectedState = -1;
+							
 								Net_playerWantRespawn = !Net_playerWantRespawn;
 								
 								if (CurrentSelectedSpawn != Null)
@@ -1627,6 +1950,16 @@ Text layer_GetSpawnInterface()
 									Net_playerSpawn = MapLandmarks_PlayerSpawn.keyof(CurrentSelectedSpawn);
 								}
 							}
+							
+							if (control.ControlId == "setSpawnSelection")
+							{
+								CurrentSelectedState = 0;
+							}
+							if (control.ControlId == "setClassSelection")
+							{
+								CurrentSelectedState = 1;
+							}
+							
 							
 							if (control.ControlId == "Label_SelectClass")
 							{
@@ -2104,4 +2437,461 @@ Void UpdateColors()
 		declare spawnClan for spawn = 0;
 		Net_SpawnClan[I] = spawnClan;
 	}
+}
+
+// ------------------------------
+// BALANCE STUFF
+// ------------------------------
+
+/*
+ * Somme des ranks de la liste d'id joueurs
+ *
+ * @params : identsClan : Liste d'id joueurs
+ */
+Integer RankClan(Ident[] identsClan) {
+	declare sumRank = 0;
+	foreach (id in identsClan)
+		if(Users[id].LadderRank >= 0)
+			sumRank += Users[id].LadderRank;
+	
+	return sumRank;
+}
+
+/*
+ * Somme des scores de la liste d'id joueurs
+ *
+ * @params : identsClan : Liste d'id joueurs
+ */
+Integer ScoreClan(Ident[] identsClan) {
+	declare sumScore = 0;
+	foreach (id in identsClan)
+		foreach (player in AllPlayers)
+			if (player.User.Id == id)
+				if (AutoServerStartVoteBalance) {
+					declare oldScoreMap for player = 0;
+					sumScore += oldScoreMap;
+				} else {
+					sumScore += player.Score.Points + player.Score.RoundPoints;
+				}
+	
+	return sumScore;
+}
+
+Ident[] CpyList(Ident[] list) {
+	declare Ident[] sort;
+	foreach (val in list)
+		sort.add(val);
+	
+	return sort;
+}
+
+declare Ident[] playersClan1;
+declare Ident[] playersClan2;
+
+/*
+ * Version 2, algo d'équilibrage des équipes (par rapport aux rank)
+ * Nécessite les joueurs triés de façon décroissantes (rank)
+ *
+ * @params : 
+ * @return : Boolean, True si interversion d'un joueur utile, False sinon.
+ */
+Boolean BalanceSearchRanks(Ident[] identsPlayers, Integer deltaRankInit, Integer keyPlayerStart) {
+	if ((keyPlayerStart % 10) == 0) yield;
+	
+	//sleep(100);		// Debug
+	if (keyPlayerStart < identsPlayers.count) {
+		//UIManager.UIAll.SendChat("accès : "^identsPlayers[keyPlayerStart]^" : "^keyPlayerStart);	// Debug
+		
+		declare id = identsPlayers[keyPlayerStart];
+		declare tmpClan1 = CpyList(playersClan1);
+		declare tmpClan2 = CpyList(playersClan2);
+		
+		if (playersClan1.exists(id)) {
+			tmpClan1.remove(id);
+			tmpClan2.add(id);
+		} else {
+			tmpClan2.remove(id);
+			tmpClan1.add(id);
+		}
+		
+		declare Integer rankFound = MathLib::Abs(RankClan(tmpClan1) - RankClan(tmpClan2));
+
+		if (rankFound < deltaRankInit) {
+			playersClan1 = tmpClan1;
+			playersClan2 = tmpClan2;
+		}
+		
+		return rankFound < deltaRankInit || BalanceSearchRanks(identsPlayers, rankFound, keyPlayerStart+1);
+	}
+	
+	return False;
+}
+
+Boolean BalanceSearchScores(Ident[] identsPlayers, Integer deltaScoreInit, Integer keyPlayerStart) {
+	if ((keyPlayerStart % 10) == 0) yield;
+	
+	//sleep(100);		// Debug
+	if (keyPlayerStart < identsPlayers.count) {
+		//UIManager.UIAll.SendChat("accès : "^identsPlayers[keyPlayerStart]^" : "^keyPlayerStart);	// Debug
+		
+		declare id = identsPlayers[keyPlayerStart];
+		declare tmpClan1 = CpyList(playersClan1);
+		declare tmpClan2 = CpyList(playersClan2);
+		
+		if (playersClan1.exists(id)) {
+			tmpClan1.remove(id);
+			tmpClan2.add(id);
+		} else {
+			tmpClan2.remove(id);
+			tmpClan1.add(id);
+		}
+		
+		declare Integer scoreFound = MathLib::Abs(ScoreClan(tmpClan1) - ScoreClan(tmpClan2));
+
+		if (scoreFound < deltaScoreInit) {
+			playersClan1 = tmpClan1;
+			playersClan2 = tmpClan2;
+		}
+		
+		return scoreFound < deltaScoreInit || BalanceSearchScores(identsPlayers, scoreFound, keyPlayerStart+1);
+	}
+	
+	return False;
+}
+
+Boolean BalanceSearch(Integer[Ident] idPlayersWithRankOrScore, Integer balanceType) {
+	declare tmp = idPlayersWithRankOrScore.sort();
+
+	declare Ident[] identsPlayers;
+	foreach (key => val in tmp) {
+		identsPlayers.add(key);
+	}
+	
+	declare Ident[] idPlayersDesc;
+	for(i, 0, identsPlayers.count-1) {
+		declare j = identsPlayers.count-1 - i;
+		idPlayersDesc.add(identsPlayers[j]);
+	}
+	
+	if (balanceType == 1) return BalanceSearchRanks(idPlayersDesc, MathLib::Abs(RankClan(playersClan1) - RankClan(playersClan2)), 0);
+	return BalanceSearchScores(idPlayersDesc, MathLib::Abs(ScoreClan(playersClan1) - ScoreClan(playersClan2)), 0);
+}
+
+/*
+ * Version 1, algo d'équilibrage des équipes (par rapport aux rank)
+ * (rapide jusqu'à 4vs4, puis 10s à 5vs5, le double à 6vs6 etc.)
+ *
+ * @params : 
+ * @return : Boolean, True si interversion d'un joueur utile, False sinon.
+ */
+/*Boolean BalanceSearch(Ident[] identsPlayers, *//*Ident[] playersClan1, Ident[] playersClan2,*//* Integer keyPlayerStart) {
+	if ((keyPlayerStart % 10) == 0) yield;
+	declare Integer rankFound;
+	declare Integer deltaRankInit;
+	//sleep(100);		// Debug
+	if (keyPlayerStart < identsPlayers.count) {
+		UIManager.UIAll.SendChat("accès :"^keyPlayerStart);		// Debug
+	
+		deltaRankInit = MathLib::Abs(RankClan(playersClan1) - RankClan(playersClan2));
+		rankFound = deltaRankInit;
+		
+		declare id = identsPlayers[keyPlayerStart];
+		declare clan1Init = playersClan1;
+		declare clan2Init = playersClan2;
+		declare tmpClan1 = CpyList(playersClan1);
+		declare tmpClan2 = CpyList(playersClan2);
+		
+		if (BalanceSearch(identsPlayers, keyPlayerStart+1))
+				rankFound = MathLib::Abs(RankClan(playersClan1) - RankClan(playersClan2));
+		
+		if (playersClan1.exists(id)) {
+			tmpClan1.remove(id);
+			tmpClan2.add(id);
+		} else {
+			tmpClan2.remove(id);
+			tmpClan1.add(id);
+		}
+		
+		playersClan1 = tmpClan1;
+		playersClan2 = tmpClan2;
+		
+		if (!BalanceSearch(identsPlayers, keyPlayerStart+1)
+				&& MathLib::Abs(RankClan(playersClan1) - RankClan(playersClan2)) > rankFound){
+			playersClan1 = clan1Init;
+			playersClan2 = clan2Init;
+		}
+	}
+	
+	return rankFound < deltaRankInit;
+}*/
+
+
+/*
+ * Équilibrage des équipes
+ *
+ * @params : balanceType : 1 ranks, 2 scores
+ */
+Void BalanceTeams(Integer balanceType) {
+	declare Integer[Ident] idPlayers;
+	playersClan1.clear();
+	playersClan2.clear();
+	
+	foreach (player in Players) {
+		if (balanceType == 1) {
+			if (player.User.LadderRank < 0) idPlayers[player.User.Id] = 0;
+			else idPlayers[player.User.Id] = player.User.LadderRank;
+		} else {
+			if (AutoServerStartVoteBalance) {
+				declare oldScoreMap for player = 0;
+				idPlayers[player.User.Id] = oldScoreMap;
+			} else {
+				idPlayers[player.User.Id] = player.Score.Points + player.Score.RoundPoints;
+			}
+		}
+		
+		declare Integer PlayerClan for player;
+		if (PlayerClan == 1)
+			playersClan1.add(player.User.Id);
+		else
+			playersClan2.add(player.User.Id);
+	}
+	
+	BalanceSearch(idPlayers, balanceType);
+	if (balanceType == 1)
+		UIManager.UIAll.SendChat("Teams are now balanced in term of ranks.");
+	else
+		UIManager.UIAll.SendChat("Teams are now balanced in term of scores.");
+	
+	foreach (player in Players) {	
+		declare oldPlayerClan = player.CurrentClan;
+		declare Integer PlayerClan for player;
+		
+		if(playersClan1.exists(player.User.Id))
+			PlayerClan = 1;
+		else if (playersClan2.exists(player.User.Id))
+			PlayerClan = 2;
+		
+		if (oldPlayerClan != PlayerClan) {
+			UnspawnPlayer(player);
+			declare TempoPlayerRequestedClan for player = 0;
+			TempoPlayerRequestedClan = Now+10000;
+			declare UI <=> UIManager.GetUI(player);
+			if (UI != Null) {
+				UI.SendChat("$999Team notice: $fffYou was redirected to " ^ Teams[PlayerClan - 1].ColorizedName ^ " team"); 
+			}
+		}
+	}
+	
+	//LastTimeBalance = Now;
+}
+
+/*
+ * Équilibrage d'un nouveau joueur
+ * valable pour un nouvel arrivant ou une bascule spectateur -> joueur
+ *
+ * @params : Player : Joueur concerné
+ */
+Integer dispatchNewOrSpectPlayerClan(CSmPlayer Player) {
+	declare Ident[] playersClan1;
+	declare Ident[] playersClan2;
+	foreach (player in Players) {
+		declare Integer PlayerClan for player;
+		if (player.User.Id != Player.User.Id) {
+			if (PlayerClan == 1)
+				playersClan1.add(player.User.Id);
+			else
+				playersClan2.add(player.User.Id);
+		}
+	}
+	
+	// check si tout est bien équillibré niveau nombre joueur
+	/*declare diffTeams = MathLib::Abs(GetNbPlayers(1) - GetNbPlayers(2));
+	if (diffTeams > 0)
+	{
+		if (GetNbPlayers(1) > GetNbPlayers(2))
+			return 2;
+		else
+			return 1;
+	}*/
+
+	declare playerScore = Player.Score.Points + Player.Score.RoundPoints;
+	if (playerScore > 0) {
+		// Équilibrage par score (probable passage de spectateur à joueur)
+		if (MathLib::Abs((ScoreClan(playersClan1)+playerScore) - ScoreClan(playersClan2))
+				<= MathLib::Abs(ScoreClan(playersClan1) - (ScoreClan(playersClan2)+playerScore)))
+			return 1;
+		return 2;			
+	}
+
+	// Équilibrage par rank (probable nouvelle connexion)
+	declare playerRank = Player.User.LadderRank;
+	if (MathLib::Abs((RankClan(playersClan1)+playerRank) - RankClan(playersClan2))
+			<= MathLib::Abs(RankClan(playersClan1) - (RankClan(playersClan2)+playerRank)))
+		return 1;
+	return 2;
+}
+
+Boolean isBalanced(CSmPlayer player, Integer teamRequest)
+{
+	declare team = dispatchNewOrSpectPlayerClan(player);
+	if (team == teamRequest)
+		return True;
+	return False;
+}
+
+/*
+ * Lance/actualise le vote pour l'équilibrage des équipes
+ * Si AutoServerStartVoteBalance : vote automatique lancé par le serveur
+ */
+Void RefreshVoteBalance() {
+	if (VoteBalanceResult.count != 3) {	// Lancement du serveur
+		BalancingIsRequired = False;
+		VoteBalanceResult = [Text[],Text[],Text[]];
+	}
+
+	if (AutoServerStartVoteBalance && !BalancingIsRequired) {
+		BalancingIsRequired = True;
+		VoteBalanceResult[0].clear();	// Yes option
+		VoteBalanceResult[1].clear();	// No option
+		VoteBalanceResult[2].clear();	// Other option
+		// BalanceType = 2; // Même type que le vote précédent
+		PlayerNameRequestVoting = "AgE server";
+		VoteBalanceResult[0].add(PlayerNameRequestVoting);
+		TimeStartVote = Now;
+	}
+	
+	foreach (player in AllPlayers) {	// Spectateur inclus
+		declare UI <=> UIManager.GetUI(player);		
+		if (UI != Null) {
+			declare netread Net_CallForBalance for UI = 0;
+			declare _lastCallForBalance for UI = 0;
+			
+			if (_lastCallForBalance != Net_CallForBalance) {
+				
+				if (!BalancingIsRequired && (Net_CallForBalance - _lastCallForBalance) != 0) {
+					BalancingIsRequired = True;
+					VoteBalanceResult[0].clear();	// Yes option
+					VoteBalanceResult[1].clear();	// No option
+					VoteBalanceResult[2].clear();	// Other option
+					BalanceType = Net_CallForBalance - _lastCallForBalance;	// 1:Ranks, 2:Scores
+					PlayerNameRequestVoting = player.User.Name;
+					TimeStartVote = Now;
+					
+					VoteBalanceResult[0].add(player.User.Login);
+				}
+				_lastCallForBalance = Net_CallForBalance;
+			}
+			
+			declare netread Net_PlayerVote for UI = 0;	// /!\ option+1
+			declare _PlayerVote for UI = 0;
+			if (_PlayerVote != Net_PlayerVote) {
+				declare Integer playerVote;
+				playerVote = (Net_PlayerVote - _PlayerVote) - 1;
+				//UIManager.UIAll.SendChat("playervote"^playerVote^" player : "^player.User.Login);
+				if (!VoteBalanceResult[playerVote].exists(player.User.Login)) {
+					foreach (key => elem in VoteBalanceResult) {	// Utilité plus que limité // fuck maniascript
+						if (key == playerVote) {
+							VoteBalanceResult[key].add(player.User.Login);
+							//elem.add(player.User.Login);			// fuck maniascript
+						} else if (elem.exists(player.User.Login)) {
+							//elem.remove(player.User.Login);	// fuck maniascript
+							VoteBalanceResult[key].remove(player.User.Login);
+						}
+					}
+				}
+				_PlayerVote = Net_PlayerVote;
+			}
+		}					
+	}
+
+	if (BalancingIsRequired /*&& TimeStartVote + S_TimeToVoteBalance < Now*/) {	// End vote
+		declare Real nbVotant = 0.;
+		foreach (option in VoteBalanceResult) nbVotant += option.count;
+		declare AllplayersNoBotCount = 0;
+		foreach (player in AllPlayers) if (!player.IsBot && !player.IsFakePlayer) AllplayersNoBotCount +=1;
+		
+		if (TimeStartVote + S_TimeToVoteBalance < Now
+			 || (AutoServerStartVoteBalance && nbVotant - 1 == AllplayersNoBotCount)
+			 || (!AutoServerStartVoteBalance && nbVotant == AllplayersNoBotCount)) {
+			
+			BalancingIsRequired = False;
+			/*UIManager.UIAll.SendChat("Le vote est passé");
+			UIManager.UIAll.SendChat("Yes "^VoteBalanceResult[0].count);
+			UIManager.UIAll.SendChat("No "^VoteBalanceResult[1].count);
+			UIManager.UIAll.SendChat("Other "^VoteBalanceResult[2].count);*/
+		
+			if (nbVotant > 0) {	// Dans le cas où le serveur n'aurait pas de voix
+				declare Real[] tmpRatio;
+				foreach (option in VoteBalanceResult)
+					tmpRatio.add(option.count / nbVotant);
+
+				if (tmpRatio[0] >= tmpRatio[2] && tmpRatio[0]+tmpRatio[2] >= S_RatioToValideVoteBalance) {
+					// vote equilibrage par option defaut
+					UIManager.UIAll.SendChat("The vote was accepted");
+					if (BalanceType == 1) {
+						//UIManager.UIAll.SendChat("Équilibrage par ranks");
+						BalanceTeams(1);
+					} else {
+						//UIManager.UIAll.SendChat("Équilibrage par scores");
+						BalanceTeams(2);
+					}
+				} else if (tmpRatio[2] > tmpRatio[0] && tmpRatio[0]+tmpRatio[2] >= S_RatioToValideVoteBalance) {
+					// vote equilibrage par option "inverse"/Other
+					UIManager.UIAll.SendChat("The vote was accepted with the other balancing option");
+					if (BalanceType == 1) {
+						//UIManager.UIAll.SendChat("Équilibrage par scores");
+						BalanceTeams(2);
+					} else {
+						//UIManager.UIAll.SendChat("Équilibrage par ranks");
+						BalanceTeams(1);
+					}
+				} else {
+					//log("Équilibrage refusé");
+					UIManager.UIAll.SendChat("The vote was canceled");
+				}
+			}
+			AutoServerStartVoteBalance = False;
+		}
+	}
+	
+	declare netwrite Net_BalancingIsRequired for Teams[0] = BalancingIsRequired;
+	Net_BalancingIsRequired = BalancingIsRequired;
+	
+	if (BalancingIsRequired) {
+		declare netwrite Net_PlayerNameRequestVoting for Teams[0] = PlayerNameRequestVoting;
+		Net_PlayerNameRequestVoting = PlayerNameRequestVoting;
+	
+		declare netwrite Net_BalanceType for Teams[0] = BalanceType;
+		Net_BalanceType = BalanceType;
+	
+		declare netwrite Net_VoteBalanceResult2 for Teams[0] = VoteBalanceResult;
+		Net_VoteBalanceResult2 = VoteBalanceResult;
+		
+		declare netwrite Net_CountdownVoteBalance for Teams[0] = Text;
+		Net_CountdownVoteBalance = TextLib::ToText(MathLib::FloorInteger(((TimeStartVote + S_TimeToVoteBalance) - Now)/1000.));
+	}
+}
+
+Void BalanceStart()
+{
+	if (!BalancingIsRequired && MapWinner != 0)
+		if (MapMinTime + StartPrevMapTime > Now) {
+			AutoServerStartVoteBalance = True;
+			RefreshVoteBalance();
+			log("Temps minimum non dépassé, partie trop courte : "^(StartPrevMapTime + MapMinTime)/1000^"s, Now: "^Now/1000^"s");
+		} else {
+			log("Temps minimum dépassé, partie ok : "^(StartPrevMapTime + MapMinTime)/1000^"s, Now: "^Now/1000^"s");
+		}
+	
+	declare nbChecksOnMap = 1; // 1 pour le pole de rush, permet d'équilibrer le calcul (déplacement du joueur sur la map non compté...)
+	foreach (checksRound in Checkpoints) nbChecksOnMap += checksRound.count;
+	
+	declare serverTimes = S_TimeSelectionTime * 1000 + S_RushTimeGateDuration + 100000;	// ~100000 somme des temporisations de parties
+	MapMinTime = S_TimeToCaptureCheckpoint * nbChecksOnMap * S_CoeffTimeLimitCaptureCheckpointAutoTeamBalanceVote * 1000;
+	if (!IsRangedMap) MapMinTime += S_EndTime * 60000;
+	else MapMinTime -= 20000;
+	MapMinTime += serverTimes;
+	log("Temps mapMinTime : "^MapMinTime/1000^"s");
+	
+	StartPrevMapTime = Now;
 }
