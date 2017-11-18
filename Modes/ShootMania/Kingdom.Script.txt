@@ -1,0 +1,1349 @@
+/**
+ *	Mode melee
+ */
+
+#Extends "Modes/ShootMania/Base/ModeBase.Script.txt"
+
+#Const	CompatibleMapTypes	"KingdomArena"
+#Const	Version				"2014-07-25"
+#Const	ScriptName			"Melee.Script.txt"
+
+#Include "MathLib" as MathLib
+#Include "TextLib" as TextLib
+#Include "Libs/Nadeo/Message.Script.txt" as Message
+#Include "Libs/Nadeo/Interface.Script.txt" as Interface
+#Include "Libs/Nadeo/ShootMania/SM.Script.txt" as SM
+#Include "Libs/Nadeo/ShootMania/Score.Script.txt" as Score
+#Include "Libs/Nadeo/ShootMania/SpawnScreen.Script.txt" as SpawnScreen
+#Include "Libs/Nadeo/Spectators.Script.txt" as Spec
+#Include "Libs/Nadeo/Layers2.Script.txt" as Layers
+#Include "Libs/Stormium/Kits.Script.txt" as Kits
+#Include "Libs/Stormium/InterfaceClassSelector.Script.txt" as StormiumITCS
+
+// ---------------------------------- //
+// Settings
+// ---------------------------------- //
+#Setting S_TimeLimit	750 as _("Time limit")		///< Time limit on a map
+#Setting S_SegmentCount 3 as _("Segment count of a capture point")
+#Setting S_PointsToWinRound 500 as _("Points to win a round")
+#Setting S_MaxTurns 2 as _("Max turns")
+#Setting S_CheckpointTurretLegacy True as _("Get turret based on a radius")
+#Setting S_TurretRadiusLegacy 15
+#Setting S_MaxValue	1500
+#Setting S_FakeCaptureRadius 6.5
+#Setting S_StormiumRemovalOnHit 2
+
+
+#Const C_NbBots			1	///< Number of bots
+
+#Const C_SoundDirectory "file://Media/Sounds/kingdom/"
+#Const C_Sound_NearPoleUnderAttack "nearestpoleunderattack.ogg"
+#Const C_Sound_MiddlePoleUnderAttack "middlepoleunderattack.ogg"
+#Const C_Sound_FarPoleUnderAttack "farthestpoleunderattack.ogg"
+#Const C_Sound_PoleUnderAttack "" //< uniquement si il y a plus de 3 checkpoints
+#Const C_Sound_ProtectYourKing "protectyourking.ogg"
+#Const C_Sound_AttackEnemeyKing "attackenemyking.ogg"
+#Const C_Sound_CrystalSpawned ""
+#Const C_Sound_ProtectCrystal ""
+#Const C_Sound_AttackCrystal ""
+
+#Const Description _("TYPE: Free for all\nOBJECTIVE: Hit your opponents to score points. The first player to reach the points limit or the player with the highest score at the end of the time limit wins the map.")
+
+declare CSmMapLandmark[Integer] KingLandmarks;
+declare CSmPlayer[Integer] Kings;
+declare CSmMapLandmark[Integer] CaptureZones;
+declare Integer[Integer] AllCaptureZones;
+declare Vec3[Integer] FakeCaptureZones;
+declare CSmMapPlayerSpawn[Integer] Spawns;
+declare CModeTurret[Integer][] ZoneTurrets;
+declare	Integer[Integer] CaptureProgression;
+declare	Integer[Integer] CaptureClan;
+declare Integer[Integer] ClanScoreValues;
+declare CTeam MapWinner;
+declare Integer RoundWinner;
+declare Integer UpdateScore;
+declare Integer StealingClan;
+declare Boolean CanSteal;
+declare Ident Object_KingID;
+declare Ident Object_KingdomCrystalID;
+declare CSmObject CrystalObject;
+declare Ident Action_CrystalExplosion;
+
+// ---------------------------------- //
+// Extend
+// ---------------------------------- //
+
+***LogVersion***
+***
+MB_LogVersion(ScriptName, Version);
+MB_LogVersion(SM::GetScriptName(), SM::GetScriptVersion());
+MB_LogVersion(Score::GetScriptName(), Score::GetScriptVersion());
+MB_LogVersion(Message::GetScriptName(), Message::GetScriptVersion());
+MB_LogVersion(Interface::GetScriptName(), Interface::GetScriptVersion());
+MB_LogVersion(SpawnScreen::GetScriptName(), SpawnScreen::GetScriptVersion());
+***
+
+// ---------------------------------- //
+// Set rules
+// ---------------------------------- //
+***Rules***
+***
+declare ModeName = "Melee";
+declare ModeRules = TextLib::Compose(_("$<%11. $>Hit your opponents to score points.\n$<%12. $>The first player to reach the points limit or the player with the highest score at the end of the time limit wins the map."), "$"^SpawnScreen::GetModeColor());
+SpawnScreen::ResetRulesSection();
+SpawnScreen::AddSubsection(_("Type"), _("Free for all"), 0.);
+SpawnScreen::AddSubsection(_("Objectives"), ModeRules, 20.);
+SpawnScreen::CreatePrettyRules(ModeName);
+ModeStatusMessage = _("TYPE: Free for all\nOBJECTIVE: Hit a maximum of players to win the game.");
+***
+
+// ---------------------------------- //
+// Server start
+// ---------------------------------- //
+***StartServer***
+***
+
+ItemList_Begin();
+Object_KingID = ItemList_Add("KingBot.Item.Gbx");
+Object_KingdomCrystalID = ItemList_Add("PickupAdvantageCrystal.Item.gbx");
+ItemList_End();
+
+ActionList_Begin();
+Action_CrystalExplosion = ActionList_Add("CrystalExplosion.Action.Gbx");
+ActionList_End();
+
+Kits::StartServer();
+
+// ---------------------------------- //
+// Set mode options
+UseClans = True;
+UseAutoSpawnBots = False;
+UseAutoRespawnBots = False;
+MB_UseSectionRound = True;
+
+Layers::Create("layer_Markers", layer_Markers());
+Layers::SetType("layer_Markers", CUILayer::EUILayerType::Markers);
+//Layers::Create("Champions_ChoosingClass", Layer_ChoosingClass());
+StormiumITCS::Load();
+
+// ---------------------------------- //
+// Create the rules
+---Rules---
+
+// ---------------------------------- //
+// Initialize UI
+SpawnScreen::CreateScores("Score.RoundPoints");
+SpawnScreen::CreateMapInfo();
+Interface::CreateRank();
+
+// ---------------------------------- //
+// Create the scores table
+ST2::SetStyle("LibST_SMBaseTeams");
+ST2::SetStyle("LibST_SMBasePoints");
+MB_SetScoresTableStyleFromXml(S_ScoresTableStylePath);
+ST2::Build("SM");
+***
+
+***InitMap***
+***
+declare PrevPointsLimit = -1;
+***
+
+// ---------------------------------- //
+// Map start
+// ---------------------------------- //
+***StartMap***
+***
+declare netwrite Boolean net_varsAreReady for Teams[0];
+net_varsAreReady = False;
+
+Users_SetNbFakeUsers(C_NbBots, 0);
+Score::MatchBegin();
+Score::RoundBegin();
+
+SM::SetupDefaultVisibility();
+
+// ---------------------------------- //
+// Init bases
+foreach (Base in MapBases) {
+	Base.Clan = 0;
+	Base.IsActive = False;
+}
+
+// ---------------------------------- //
+// Init scores
+MB_Sleep(1); ///< Allow the scores array to be sorted
+foreach (Score in Scores) {
+	declare Integer LastPoint for Score;
+	LastPoint = 0;
+}
+declare LeadId = NullId;
+if (Scores.existskey(0)) LeadId = Scores[0].User.Id;
+
+// ---------------------------------- //
+// New map sound
+UIManager.UIAll.SendNotice("", CUIConfig::ENoticeLevel::MatchInfo, Null, CUIConfig::EAvatarVariant::Default, CUIConfig::EUISound::StartRound, 0);
+UIManager.UIAll.NoticesFilter_LevelToShowAsBigMessage = CUIConfig::ENoticeLevel::MatchInfo;
+UIManager.UIAll.NoticesFilter_HideMapWarning = True;
+
+StartTime = Now;
+
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing;
+UIManager.UIAll.UISequence_CustomMTClip = "None";
+
+declare CurrentTimeLimit = S_TimeLimit;
+
+InitLandmarks();
+GetTurrets();
+
+Layers::Update("layer_Markers", layer_Markers());
+***
+
+***StartRound***
+***
+	StartTime = Now;
+	UIManager.UIAll.BigMessage = "New round.";
+	MB_Sleep(1500);
+	UIManager.UIAll.BigMessage = "";
+
+	ClanScoreValues = [1 => 0, 2 => 0];
+	StealingClan = 0;
+	CanSteal = False;
+	
+	foreach (i => _0 in CaptureZones)
+	{
+		CaptureProgression[i] = 0;
+		CaptureClan[i] = 0;
+	}
+	
+	declare netwrite net_stealClan for Teams[0] = 0;
+	net_stealClan = 0;
+
+	SpawnKings();
+	
+	UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing;
+	if (S_TimeLimit > 0) EndTime = StartTime + (S_TimeLimit * 1000);
+	else EndTime = -1;
+	
+	/*CrystalObject <=> ObjectCreate(Object_KingdomCrystalID);
+	
+	if (CrystalObject != Null)
+	{	
+		foreach (landmark in MapLandmarks)
+		{
+			log(landmark.Tag);
+			if (landmark.Tag == "AdvPos")
+			{
+				//CrystalObject.SetPositionAndVel(landmark.Position, <0., 0., 0.>);
+			}
+		}	
+	}*/
+	
+	RoundWinner = 0;
+***
+
+***Yield***
+***
+	Kits::Yield();
+	StormiumITCS::Loop();
+***
+
+// ---------------------------------- //
+// Play loop
+// ---------------------------------- //
+***PlayLoop***
+***
+	Kits::PlayLoop();
+	Message::Loop();
+
+	Layers::Attach("layer_Markers");
+	Layers::Attach("Champions_ChoosingClass");
+
+	ManageCapture();
+	ManagePlayers();
+	ManageEvents();
+	ManageScores();
+	
+	if (EndTime > 0 && EndTime < Now)
+	{	
+		MB_StopRound();
+	}
+***
+
+***EndRound***
+***
+	Score::RoundEnd();	
+
+	if (!MatchEndRequested)
+	{
+		/*foreach (player in AllPlayers)
+		{
+			if (player != Kings[3 - RoundWinner])
+				UnspawnPlayer(player);
+		}
+	
+		ViewRange(Kings[3 - RoundWinner].Position, 250.);
+		
+		MB_Sleep(3000);*/
+		
+		UIManager.UIAll.UISequence = CUIConfig::EUISequence::CustomMTClip;
+		
+		if (RoundWinner == 1)
+			UIManager.UIAll.UISequence_CustomMTClip = "ExploRed";
+		else if (RoundWinner == 2)
+			UIManager.UIAll.UISequence_CustomMTClip = "ExploBlue";
+			
+		UIManager.UIAll.OverlayHideGauges = True;
+		UIManager.UIAll.OverlayHideCrosshair = True;
+	
+		if (RoundWinner > 0)
+		{
+			ClanScores[RoundWinner] += 1;
+		
+			declare CSmPlayer kingWinner = Kings[RoundWinner];
+		
+			declare ShootProj for kingWinner = False;
+			declare ShootPos for kingWinner = Vec3;
+			declare PlayerToIgnore for kingWinner = Kings[3 - RoundWinner];
+			declare ShootType for kingWinner = Boolean[Integer];
+			ShootType[0] = True;
+			ShootProj = True;
+			
+			declare pos = Kings[3 - RoundWinner].Position;
+			pos.Y -= .5;
+			
+			ShootPos = pos;
+			
+			MB_Sleep(1000);
+			
+			UnspawnPlayer(Kings[3 - RoundWinner]);
+			
+			UIManager.UIAll.BigMessage = Teams[RoundWinner - 1].ColorizedName ^ " wins the round!";
+		}
+		else
+			UIManager.UIAll.BigMessage = "Draw.";
+		
+		MB_Sleep(2000);
+		
+		SM::UnspawnAllPlayers();
+		
+		UIManager.UIAll.OverlayHideGauges = False;
+		UIManager.UIAll.OverlayHideCrosshair = False;
+		
+		MB_Sleep(1);
+		
+		UIManager.UIAll.UISequence_CustomMTClip = "None";
+		
+		UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
+		MB_Sleep(1000);		
+		MB_Sleep(1000);
+		MB_Sleep(2000);
+		UIManager.UIAll.BigMessage = "";
+		
+		for (i, 1, 2)
+			if (ClanScores[i] >= S_MaxTurns)
+			{
+				MapWinner <=> Teams[i - 1];
+				MB_StopMap();
+			}
+	}
+	else
+	{
+		MB_StopMap();
+		MapWinner = Null;
+	}
+***
+
+// ---------------------------------- //
+// Map end
+// ---------------------------------- //
+***EndMap***
+***
+EndTime = -1;
+Score::MatchEnd(True);
+
+Message::CleanBigMessages();
+UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::EndRound;
+UIManager.UIAll.BigMessageSoundVariant = 0;
+if (MapWinner != Null) {
+	UIManager.UIAll.BigMessage = TextLib::Compose(_("$<%1$> wins the match!"), MapWinner.ColorizedName);
+} else {
+	UIManager.UIAll.BigMessage = _("|Match|Draw");
+}
+MB_Sleep(2000);
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::ForcedVisible;
+MB_Sleep(5000);
+
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::Podium;
+while(!UIManager.UIAll.UISequenceIsCompleted) {
+	MB_Yield();
+}
+
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::Normal;
+UIManager.UIAll.BigMessage = "";
+***
+
+// ---------------------------------- //
+// Server end
+// ---------------------------------- //
+***EndServer***
+***
+Interface::DestroyRank();
+SpawnScreen::DestroyRules();
+SpawnScreen::DestroyScores();
+SpawnScreen::DestroyMapInfo();
+***
+
+Void ViewRange(Vec3 pos, Real range) 
+{
+	UIManager.UIAll.SpectatorCamAutoLatitude = pos.X;
+	UIManager.UIAll.SpectatorCamAutoLongitude = pos.Y;
+	UIManager.UIAll.SpectatorCamAutoRadius = range;
+}
+
+Vec3 GetBlockPosition(Int3 _BlockPosition) {
+	declare Vec3 Position;
+	declare Vec3 ShiftPosition;
+	declare BlockPosition = _BlockPosition;
+	declare BlockSize = <8., 8., 8.>;
+	
+	BlockSize = <8., 8., 8.>;
+	BlockPosition.Y -= 5;
+	
+	for (I, 0, 2) {
+		Position[I] = (BlockPosition[I] * BlockSize[I]) + (BlockSize[I] / 2.) + ShiftPosition[I];
+	}
+	
+	return Position;
+}
+
+Vec3 VecMiddleInt3(Int3 toMiddle, Boolean accordBlockSize)
+{
+	declare _toMiddle = <toMiddle.X + 0., toMiddle.Y + 0., toMiddle.Z + 0.>;
+
+	if (accordBlockSize)
+	{
+		if (Map.CollectionName == "Storm")
+		{
+			_toMiddle = GetBlockPosition(toMiddle);
+		}
+	}
+
+	declare xMiddled = _toMiddle.X + 0.5;
+	declare zMiddled = _toMiddle.Z + 0.5;
+	
+	return <xMiddled, toMiddle.Y + 0., zMiddled>;
+}
+
+Text layer_Markers()
+{
+	declare CC = """ halign="center" valign="center" """;
+	declare LC = """ halign="left" valign="center" """;
+	declare RC = """ halign="right" valign="center" """;
+	declare Text instance;
+	declare Text scriptZone_AddFrame;
+	declare Text scriptKing_AddFrame;
+	
+	declare SpaceX = 5.;
+	declare Width = (AllCaptureZones.count - 1) * SpaceX;
+	foreach (i => landmark in AllCaptureZones)
+	{
+		declare PosnX = (-Width/2.) + (i * SpaceX);
+	
+		instance ^= """<frameinstance modelid="frame_progressionZoneMarker" id="instance_progZone:{{{i}}}" />""";
+		instance ^= """<frameinstance pos="{{{(PosnX + 2.5) - Width / 2}}} 70" modelid="frame_progressionZone" id="nomarker_progZone:{{{i}}}" />""";
+		scriptZone_AddFrame ^= """
+		frame_ProgressionZoneFrames.add((Page.GetFirstChild("instance_progZone:{{{i}}}") as CMlFrame));
+		frame_ProgressionZoneNoMarkers.add((Page.GetFirstChild("nomarker_progZone:{{{i}}}") as CMlFrame));
+		zonesId.add({{{i}}});
+		""";
+	}
+	for (i, 1, 2)
+	{
+		instance ^= """<frameinstance modelid="frame_kingMarker" id="instance_king:{{{i}}}" />""";
+		scriptKing_AddFrame ^= """
+		frame_KingFrames.add((Page.GetFirstChild("instance_king:{{{i}}}") as CMlFrame));
+		""";
+	}
+	
+	return """
+	<manialink version="3">
+		<framemodel id="frame_progressionZoneMarker" scale="1.25" >
+			<label {{{CC}}} id="bgCircle" z-index="0" text="$n" scale="1" textcolor="fff" opacity="0.5" />
+			<label {{{CC}}} id="progCircle" z-index="1" text="$n" scale="0.5" textcolor="f00" opacity="0.75" />
+			<label {{{LC}}} id="progLabel" pos="1.5" textfont="oswald" z-index="1" text="$n100%" scale="0.5" textcolor="fff" opacity="0.75" />
+		</framemodel>
+		<framemodel id="frame_progressionZone" scale="2" >
+			<label {{{CC}}} id="bgCircle" z-index="0" text="$n" scale="1" textcolor="fff" opacity="0.5" />
+			<label {{{CC}}} id="bgCircle2" z-index="2" text="$n" scale="0.33" textcolor="000" opacity="0.25" />
+			<label {{{CC}}} id="bgCircle2" z-index="2" text="$n" scale="0.66" textcolor="000" opacity="0.5" />
+			<label {{{CC}}} id="bgCircle2" z-index="2" text="$n" scale="1" textcolor="000" opacity="0.75" />
+			<label {{{CC}}} id="progCircle" z-index="1" text="$n" scale="0.5" textcolor="f00" opacity="0.75" />
+			<label {{{CC}}} id="progLabel" scale="0" />
+		</framemodel>
+		<framemodel id="frame_kingMarker" scale="1.25" >
+			<label {{{CC}}} id="progLabel" pos="0" textfont="oswald" z-index="1" text="$s$n0%" scale="1" textcolor="fff" opacity="0.75" />
+			<quad {{{CC}}} id="CanBeStole" pos="0 5" style="Icons64x64_2" substyle="ServerNotice" scale="0.3" sizen="11 20" />
+		</framemodel>
+		<frame id="frame_advantage" pos="0 80">
+			<quad {{{RC}}} scale="0.4" pos="-.5" image="file://Media/Manialinks/ShootMania/Common/GoalIconCapOn.dds" sizen="11 20" colorize="f00" />
+			<label {{{LC}}} scale="1.1" id="advArmorsLeft" pos=".5" textfont="oswald" z-index="1" text="$s0" textcolor="fff"/>
+		</frame>
+		<frame id="scoreLeft" pos="-20 90">
+			<quad {{{LC}}} sizen="17.5 15" pos="1 2.5" style="UiSMSpectatorScoreBig" substyle="BotLeft" colorize="00f" />
+			<label {{{LC}}} id="labelScoreBlue" pos="7.5 2.5" z-index="1" textfont="oswald" textprefix="$s"/>
+			<frame z-index="-1" scale="1.25">
+				<quad {{{RC}}} pos="3.65" sizen="17.5 5" bgcolor="000" opacity="0.5" />
+				<quad id="quadProgBlue" {{{RC}}} pos="3.65" z-index="1" sizen="4 5" bgcolor="00f" opacity="0.5" />
+				<label id="labelProgBlue" {{{RC}}} pos="2.75" z-index="2" textfont="oswaldmono" text="$s$n0%" />
+				<quad {{{RC}}} pos="-12" z-index="2" sizen="4 7.5" bgcolor="000" style="Icons64x64_2" substyle="NucleusHit" />
+			</frame>
+		</frame>
+		<frame id="scoreRight" pos="20 90">
+			<quad {{{RC}}} sizen="-17.5 15" pos="-18.5 2.5" style="UiSMSpectatorScoreBig" substyle="BotLeft" colorize="f00" />
+			<label {{{RC}}} id="labelScoreRed" pos="-7.5 2.5" z-index="1" textfont="oswald" textprefix="$s"/>
+			<frame z-index="-1" scale="1.25">
+				<quad {{{LC}}} pos="-3.65" sizen="17.5 5" bgcolor="000" opacity="0.5" />
+				<quad id="quadProgRed" {{{LC}}} pos="-3.65" z-index="1" sizen="4 5" bgcolor="f00" opacity="0.5" />
+				<label id="labelProgRed" {{{LC}}} pos="-2.75" z-index="2" textfont="oswaldmono" text="$s$n0%" />
+				<quad {{{LC}}} pos="12" z-index="2" sizen="4 7.5" bgcolor="000" style="Icons64x64_2" substyle="NucleusHit" />
+			</frame>
+		</frame>
+		
+		{{{instance}}}
+		
+		<script><!--
+			#Include "MathLib" as MathLib
+			#Include "TextLib" as TextLib
+		
+			Real Lerp(Real a, Real b, Real t)
+			{
+				return a * (1 - t) + b * t;
+			}
+			
+			Integer PingPong(Integer a, Integer length)
+			{
+				return a % (length - 1);
+			}
+		
+			main()
+			{
+				declare netread Integer[Integer] net_CurrentZonesProgression for Teams[0];
+				declare netread Integer[Integer] net_ZonesClan for Teams[0];
+				declare netread Vec3[Integer] net_zonesPos for Teams[0];
+				declare netread Integer[Integer] net_favorableClanZone for Teams[0];
+				declare netread Integer[Integer] net_ClanScoreValues for Teams[0] = [1 => 0, 2 => 0];
+				declare netread Integer net_MaxValue for Teams[0];
+				declare netread Integer net_PointsToWinRound for Teams[0];
+				declare netread Boolean net_varsAreReady for Teams[0] = False;
+				declare netread Integer[Integer][Integer] net_PlayerCount for Teams[0];
+				declare netread Integer net_stealClan for Teams[0] = 0;
+				
+				declare soundNearPoleUnderAttack = Audio.CreateSound("{{{C_SoundDirectory}}}{{{C_Sound_NearPoleUnderAttack}}}");
+				declare soundMiddlePoleUnderAttack = Audio.CreateSound("{{{C_SoundDirectory}}}{{{C_Sound_MiddlePoleUnderAttack}}}");
+				declare soundFarPoleUnderAttack = Audio.CreateSound("{{{C_SoundDirectory}}}{{{C_Sound_FarPoleUnderAttack}}}");
+				declare soundStealStormium = Audio.CreateSound("{{{C_SoundDirectory}}}{{{C_Sound_AttackEnemeyKing}}}");
+				declare soundDefendStormium = Audio.CreateSound("{{{C_SoundDirectory}}}{{{C_Sound_ProtectYourKing}}}");
+				
+				declare Integer[] zonesId;
+				declare CMlFrame[] frame_ProgressionZoneFrames;
+				declare CMlFrame[] frame_ProgressionZoneNoMarkers;
+				{{{scriptZone_AddFrame}}}
+				declare CMlFrame[] frame_KingFrames;
+				{{{scriptKing_AddFrame}}}
+				
+				declare LabelProgressions = [(Page.GetFirstChild("labelProgBlue") as CMlLabel), (Page.GetFirstChild("labelProgRed") as CMlLabel)];
+				
+				declare LabelScores = [(Page.GetFirstChild("labelScoreBlue") as CMlLabel), (Page.GetFirstChild("labelScoreRed") as CMlLabel)];
+				
+				declare GaugeProgressions = [(Page.GetFirstChild("quadProgBlue") as CMlQuad), (Page.GetFirstChild("quadProgRed") as CMlQuad)];
+							
+				declare Integer LastUpdateTime = Now;
+				declare Integer lastTimeDelta = Now;
+				declare Real TimeDelta = 0.;
+				declare Integer lastStealClan = 0;
+				
+				wait(net_varsAreReady);
+				
+				while(True)
+				{
+					yield;
+					
+					TimeDelta = (Now - lastTimeDelta) / 1000.;
+					lastTimeDelta = Now;
+					
+					foreach (event in AchievementsManager.PendingEvents)
+					{
+						log(event.Type);
+					}
+
+					if (LastUpdateTime + 2 < Now)
+					{
+						for (i, 1, 2)
+							LabelScores[i - 1].SetText(ClanScores[i] ^ "");
+					
+						LastUpdateTime = Now;
+						
+						if (lastStealClan != net_stealClan)
+						{
+							lastStealClan = net_stealClan;
+							
+							if (GUIPlayer != Null && lastStealClan != 0)
+							{
+								soundNearPoleUnderAttack.Stop();
+								soundMiddlePoleUnderAttack.Stop();
+								soundFarPoleUnderAttack.Stop();
+								if (lastStealClan == GUIPlayer.CurrentClan)
+								{
+									soundStealStormium.Play();
+								}
+								else
+									soundDefendStormium.Play();
+							}
+						}
+
+						ClientUI.MarkersXML = "";
+						foreach (_x => i in zonesId)
+						{
+							declare zonePosition = net_zonesPos[i];
+							frame_ProgressionZoneFrames[_x].Visible = True;
+							
+							declare frame <=> frame_ProgressionZoneFrames[_x];
+							declare blinking = False;
+							declare frame_lastTimeBlinking for frame = 0;
+							declare lastPlayerCount for frame = 0;
+							
+							declare noMarkerFrame <=> frame_ProgressionZoneNoMarkers[_x];
+							
+							declare backgroundCircle <=>	(frame.GetFirstChild("bgCircle") as CMlLabel);
+							declare progressionCircle <=> (frame.GetFirstChild("progCircle") as CMlLabel);
+							declare progressionLabel <=> (frame.GetFirstChild("progLabel") as CMlLabel);
+							
+							declare n_backgroundCircle <=>	(noMarkerFrame.GetFirstChild("bgCircle") as CMlLabel);
+							declare n_progressionCircle <=> (noMarkerFrame.GetFirstChild("progCircle") as CMlLabel);
+						
+							declare markerPos = zonePosition.X ^ " " ^ zonePosition.Y + 5 ^ " " ^ zonePosition.Z;
+							ClientUI.MarkersXML ^= "<marker visibility='WhenInFrustum' manialinkframeid='instance_progZone:"^i^"' pos='"^markerPos^"'/>";
+							
+							declare newVal = (0. + net_CurrentZonesProgression[i]) / net_MaxValue;
+							
+							progressionCircle.RelativeScale = Lerp(progressionCircle.RelativeScale, newVal, TimeDelta * 5);
+							if (MathLib::Abs(progressionCircle.RelativeScale - newVal) >= 0.25)
+							{
+								progressionCircle.RelativeScale = newVal;
+							}
+								
+							if (net_favorableClanZone[i] > 0)
+							progressionCircle.TextColor = Teams[net_favorableClanZone[i] - 1].ColorSecondary;
+							if (net_ZonesClan[i] > 0)
+							{
+								backgroundCircle.TextColor = Teams[net_ZonesClan[i] - 1].ColorSecondary;
+							}
+							else
+								backgroundCircle.TextColor = <1., 1., 1.>;
+								
+							noMarkerFrame.RelativeScale = frame.RelativeScale * 1.625;
+							n_progressionCircle.RelativeScale = progressionCircle.RelativeScale;
+							n_backgroundCircle.TextColor = backgroundCircle.TextColor;
+							n_progressionCircle.TextColor = progressionCircle.TextColor;
+							
+							if (net_CurrentZonesProgression[i] != 0)
+							{
+							
+								declare oldValue for progressionLabel = net_CurrentZonesProgression[i];
+								
+								/*declare newVal = Lerp(oldValue + 0., net_CurrentZonesProgression[i] + 0., TimeDelta * 1) / (net_MaxValue);
+								newVal *= 1000;*/
+								
+								newVal = progressionCircle.RelativeScale * 1000;
+								
+								progressionLabel.SetText("$s$n" ^ MathLib::FloorInteger(newVal) / 10. ^ "%");
+								
+								blinking = oldValue != net_CurrentZonesProgression[i]; 
+								
+								oldValue = net_CurrentZonesProgression[i];
+							}
+							else 
+								progressionLabel.SetText("$s$n0%");
+								
+							if (GUIPlayer != Null)
+							{
+								if (net_favorableClanZone[i] > 0 && GUIPlayer.CurrentClan != net_favorableClanZone[i])
+								{
+									if (net_PlayerCount[i][net_favorableClanZone[i] - 1] != lastPlayerCount)
+									{
+										lastPlayerCount = net_PlayerCount[i][net_favorableClanZone[i] - 1];
+										if (lastPlayerCount > 0)
+										{
+											if (i == 0)
+												soundMiddlePoleUnderAttack.Play();
+											else
+											{
+												if (GUIPlayer.CurrentClan == 1)
+												{
+													if (i == -1)
+														soundNearPoleUnderAttack.Play();
+													else if (i == 1)
+														soundFarPoleUnderAttack.Play();
+												}
+												else
+												{
+													if (i == 1)
+														soundNearPoleUnderAttack.Play();
+													else if (i == -1)
+														soundFarPoleUnderAttack.Play();
+												}
+											}
+										}
+									}
+								}
+								declare SpaceX = 5.;
+								declare Width = ((zonesId.count/2) - 1) * SpaceX;
+								declare PosnX = (-Width/2.) + (i * SpaceX);
+								
+								if (GUIPlayer.CurrentClan == 2)
+									noMarkerFrame.RelativePosition_V3 = <(-PosnX) + 10, 70.>;
+								else
+									noMarkerFrame.RelativePosition_V3 = <(PosnX) - 10, 70.>;
+							}
+								
+							if (blinking && frame_lastTimeBlinking + 1000 < Now)
+							{
+								frame_lastTimeBlinking = Now;
+								
+								AnimMgr.Add(frame, "<frame scale='1.25'/>", 500, CAnimManager::EAnimManagerEasing::QuadIn);
+								AnimMgr.Add(frame, "<frame scale='1'/>", Now + 500, 500, CAnimManager::EAnimManagerEasing::BackOut);
+							}
+							else
+								frame.RelativeScale = 1.;
+						}
+						foreach (landmark in MapLandmarks)
+						{
+							if (landmark.Tag == "King")
+							{
+								declare frame <=> frame_KingFrames[landmark.Order - 1];
+								declare progressionLabel <=> (frame.GetFirstChild("progLabel") as CMlLabel);
+								declare canBeStoleQuad <=> (frame.GetFirstChild("CanBeStole") as CMlQuad);
+							
+								declare markerPos = landmark.Position.X ^ " " ^ landmark.Position.Y + 5 ^ " " ^ landmark.Position.Z;
+								ClientUI.MarkersXML ^= "<marker visibility='WhenInFrustum' manialinkframeid='instance_king:"^landmark.Order^"' pos='"^markerPos^"'/>";
+								
+								canBeStoleQuad.Visible = lastStealClan > 0 && lastStealClan != landmark.Order;
+								
+								if (net_ClanScoreValues[landmark.Order] != 0)
+								{
+									declare newVal = (net_ClanScoreValues[landmark.Order] + 0.) / (net_PointsToWinRound);
+									newVal *= 1000;
+									
+									progressionLabel.SetText("$s$n" ^ MathLib::FloorInteger(newVal) / 10. ^ "%");
+								}
+								else 
+									progressionLabel.SetText("$s$n0%");
+								
+								LabelProgressions[landmark.Order - 1].SetText(progressionLabel.Value);
+								GaugeProgressions[landmark.Order - 1].Size = <((net_ClanScoreValues[landmark.Order] + 0.) / net_PointsToWinRound) * 17.5, 5.>;
+							}
+						}
+					}
+				}
+			}
+		--></script>
+	</manialink>
+	""";
+}
+
+Text Layer_ChoosingClass()
+{
+	declare CC = """ halign="center" valign="center" """;
+	declare LC = """ halign="left" valign="center" """;
+	declare RC = """ halign="right" valign="center" """;
+	
+	return """
+<manialink version="3">
+	<framemodel id="fm_Class">
+		<label z-index="2" {{{CC}}} pos="-22.5 0" id="Label_Icon" text=""/>
+		<quad pos="0 -8" id="Quad_Selected" style="BgRaceScore2" rot="-90" substyle="CartoucheLine" halign="left" valign="center" size="16 60" colorize="0f0"/>
+		<label z-index="1" textfont="Oswald" id="Label_SelectClass" scriptevents="1" pos="0 0 0" halign="center" valign="center" text="SOLDIER" size="60 15" textsize="4" />
+		<label z-index="1" textfont="RajdhaniMono" id="Label_KitCounter" pos="20 0 0" halign="center" valign="center" text="0" size="60 15" textsize="4" />
+	</framemodel>
+	
+	<frame pos="155 25">
+		<label {{{RC}}} textfont="OswaldMono" text="$sChoose your kit"/>
+		<label {{{RC}}} textfont="OswaldMono" text="$sModifications will be applied next round" textsize="2" pos="0 -5"/>
+	</frame>
+	<frame pos="132.5 -25" scale="0.8">
+		<frameinstance modelid="fm_Class" id="Frame_Class1" posn="0 40"/>
+		<frameinstance modelid="fm_Class" id="Frame_Class2" posn="0 24"/>
+		<frameinstance modelid="fm_Class" id="Frame_Class3" posn="0 8"/>
+		<frameinstance modelid="fm_Class" id="Frame_Class4" posn="0 -8"/>
+		<frameinstance modelid="fm_Class" id="Frame_Class5" posn="0 -24"/>
+		<frameinstance modelid="fm_Class" id="Frame_Class6" posn="0 -40"/>
+	</frame>
+	
+	<script><!--
+	#Include "TextLib" as TL
+	#Include "MathLib" as MathLib
+	
+	main()
+	{
+		declare netwrite Net_playerWantedKit for UI = "soldier";	
+
+		declare FrameClasses = CMlFrame[];
+		for (I, 1, 6)
+		{
+			declare frame <=> (Page.GetFirstChild("Frame_Class" ^ I) as CMlFrame);
+			declare classLabel for frame <=> (frame.GetFirstChild("Label_SelectClass") as CMlLabel);
+			declare classIcon for frame <=> (frame.GetFirstChild("Label_Icon") as CMlLabel);
+			declare quadSelected for frame <=> (frame.GetFirstChild("Quad_Selected") as CMlQuad);
+			declare counterLabel for frame <=> (frame.GetFirstChild("Label_KitCounter") as CMlLabel);
+			declare isSelected for classLabel = False;
+			
+			if (I == 1) { classLabel.Value = "SOLDIER"; classIcon.Value = ""; }
+			if (I == 2) { classLabel.Value = "SNIPER"; classIcon.Value = ""; }
+			if (I == 3) { classLabel.Value = "MAGE"; classIcon.Value = ""; }
+			if (I == 4) { classLabel.Value = "NINJA"; classIcon.Value = "🏃"; }
+			if (I == 5) { classLabel.Value = "ENGINEER"; classIcon.Value = "🔧"; }
+			if (I == 6) { classLabel.Value = "MEDIC"; classIcon.Value = ""; }
+			
+			declare originalKit for classLabel = TL::ToLowerCase(classLabel.Value);
+			
+			quadSelected.Colorize = <1., 1., 1.>;
+			quadSelected.Opacity = 0.25;
+			
+			FrameClasses.add(frame);
+		}
+				
+		while(True)
+		{
+			sleep(16);
+			
+			foreach (frame in FrameClasses)
+			{
+				declare quadSelected for frame = CMlQuad;
+				declare classLabel for frame = CMlLabel;
+				declare originalKit for classLabel = "";
+				declare counterLabel for frame = CMlLabel;
+				
+				if (originalKit == Net_playerWantedKit)
+				{
+					quadSelected.Colorize = <0., 1., 0.>;
+					quadSelected.Opacity = 1.;
+				}
+				else
+				{
+					quadSelected.Colorize = <1., 1., 1.>;
+					quadSelected.Opacity = 0.25;
+				}
+				
+				declare counter = 0;
+				declare ActivePlayer = CSmPlayer;
+				if (InputPlayer != Null)
+					ActivePlayer <=> InputPlayer;
+				if (GUIPlayer != Null)
+					ActivePlayer <=> GUIPlayer;
+				
+				foreach (player in Players)
+				{
+					if (player.CurrentClan == ActivePlayer.CurrentClan)
+					{
+						declare netread Net_playerMayChooseThisKit for player = "";
+						if (Net_playerMayChooseThisKit == originalKit)
+							counter += 1;
+					}
+				}
+				
+				/*TODO: if (classLabel.IsFocused)
+				{
+					PosKitInfo = <0., 0., 10.>;
+						
+					Label_DescriptionShoot.Value = GetDescShoot(originalKit);
+					Label_DescriptionAction1.Value = GetDescAction1(originalKit);
+					Label_DescriptionAction2.Value = GetDescAction2(originalKit);
+					Label_DescriptionWarning.Value = GetDescWarning(originalKit);
+					Label_DescClassName.Value = originalKit;
+				}*/
+				
+				counterLabel.SetText("" ^ counter);
+			}
+			
+			foreach (event in PendingEvents)
+			{
+				if (event.Type == CMlEvent::Type::MouseClick)
+				{
+					declare control <=> event.Control;
+					if (control.ControlId == "Label_SelectClass")
+					{
+						declare originalKit for control = "";
+						Net_playerWantedKit = originalKit;				
+					}
+				}
+			}
+		}
+	}
+	--></script>
+</manialink>
+	""";
+}
+
+Void InitLandmarks()
+{
+	Spawns = CSmMapPlayerSpawn[Integer];
+	CaptureProgression = Integer[Integer];
+	CaptureClan = Integer[Integer];
+	CaptureZones = CSmMapLandmark[Integer];
+	FakeCaptureZones = Vec3[Integer];
+	AllCaptureZones = Integer[Integer];
+	foreach (landmark in MapLandmarks)
+	{
+		log("""{{{landmark.Tag}}} | {{{landmark.Order}}}""");
+		if (landmark.Tag == "Checkpoint")
+		{
+			CaptureZones[landmark.Order] <=> (landmark);
+			CaptureProgression[landmark.Order] = 0;
+			CaptureClan[landmark.Order] = 0;
+			
+			AllCaptureZones[landmark.Order] = landmark.Order;
+			
+			if (landmark.Base != Null)
+				landmark.Base.IsActive = True;
+		}
+		if (landmark.Tag == "Spawn")
+		{
+			Spawns[landmark.Order] <=> (landmark.PlayerSpawn);
+			
+			if (landmark.Base != Null)
+				landmark.Base.IsActive = True;
+		}
+	}
+	
+	declare metadata Int3[Integer] collectorsBug for Map;
+	foreach (i => collector in collectorsBug)
+	{
+		FakeCaptureZones[i] = VecMiddleInt3(<collector.X, collector.Y - 7, collector.Z>, True);
+		CaptureProgression[i] = 0;
+		CaptureClan[i] = 0;
+		
+		AllCaptureZones[i] = i;
+	}
+}
+
+Void GetTurrets()
+{
+	TurretsManager.MapTurrets_Reset ();
+
+	ZoneTurrets = CModeTurret[Integer][];
+	foreach (turret in TurretsManager.Turrets)
+	{
+		TurretsManager.Turret_Destroy(turret);
+	}
+}
+
+Void SpawnKings()
+{
+	KingLandmarks = CSmMapLandmark[Integer];
+	foreach (landmark in MapLandmarks)
+	{
+		if (landmark.Tag == "King")
+		{
+			KingLandmarks[landmark.Order] <=> landmark;
+			declare player = CreateBotPlayer(Object_KingID, landmark.Order);
+			player.ArmorMax = 100 * 100;
+			SpawnBotPlayer(player, landmark.Order, 100 * 100, landmark.BotSpawn, Now); 
+			player.Driver.Behaviour = CSmPlayerDriver::ESmDriverBehaviour::Static;
+			
+			Kings[landmark.Order] <=> player;
+			
+			ActionLoad(player, CSmMode::EActionSlot::Slot_A, Action_CrystalExplosion);
+			ActionBind(player, CSmMode::EActionSlot::Slot_A, CSmMode::EActionInput::Weapon);
+			
+			declare ShootProj for player = False;
+			declare ShootPos for player = Vec3;
+			ShootProj = False;
+			ShootPos = Vec3;
+		}
+	}
+}
+
+Integer GetSegmentMin(Integer value)
+{
+	declare segmentValue = (S_MaxValue + 0.) / (S_SegmentCount + 0.);
+	if (value < segmentValue)
+			return 0;
+
+	declare val = S_SegmentCount - MathLib::FloorInteger((((S_SegmentCount + 0.) / value) * segmentValue));
+
+	return (MathLib::NearestInteger(segmentValue) * val) + 1;
+}
+
+Void ManageCapture()
+{
+	foreach (zone in AllCaptureZones)
+	{
+		declare landmark = CSmMapLandmark;
+		foreach (captureZone in CaptureZones)
+		{
+			if (zone == captureZone.Order)
+				landmark <=> captureZone;
+		}
+	
+		declare value = CaptureProgression[zone];
+		declare clan = CaptureClan[zone];
+		declare favorableClanCapture = clan;
+		declare segmentMin = GetSegmentMin(value);
+		declare CSmPlayer[] playersOnLandmark;
+		declare landmarkPos = Vec3;
+		
+		if (landmark != Null)
+			landmarkPos = landmark.Position;
+		else
+			landmarkPos = FakeCaptureZones[zone];
+	
+		if (landmark != Null)
+		{
+			if (landmark.Sector != Null)
+			{
+				foreach (playerId in landmark.Sector.PlayersIds)
+				{
+					if (Players.existskey(playerId))
+						playersOnLandmark.add(Players[playerId]);
+				}
+			}
+			else
+			{
+				
+			}
+		}
+		else
+		{
+			foreach (player in Players)
+			{
+				if (MathLib::Distance(player.Position, FakeCaptureZones[zone]) <= S_FakeCaptureRadius)
+				{
+					playersOnLandmark.add(player);
+				}
+			}
+		}
+		
+		if (landmark != Null)
+		{
+			if (landmark.Base != Null)
+				landmark.Base.Clan = clan;
+			if (landmark.Gauge != Null)
+			{
+				landmark.Gauge.Value = value;
+				landmark.Gauge.Max = S_MaxValue;
+			}
+		}
+		
+		declare blueCount = 0;
+		declare redCount = 0;
+		foreach (player in playersOnLandmark)
+		{
+			if (player.CurrentClan == 1)
+				blueCount += 1;
+			if (player.CurrentClan == 2)
+				redCount += 1;
+		}
+		
+		if (blueCount == 0 && redCount == 0)
+		{
+			value -= 5;
+			value = MathLib::Clamp(value, segmentMin, S_MaxValue);
+			
+			if (landmark != Null)
+				landmark.Gauge.Clan = clan;
+		}
+
+		if (clan == 0)
+		{			
+			if (blueCount > 0 && redCount > 0)
+			{
+				if (landmark != Null)
+					landmark.Gauge.Clan = 0;
+			}
+			else if (blueCount != 0 || redCount != 0)
+			{
+				if (blueCount > 0)
+					favorableClanCapture = 1;
+				else
+					favorableClanCapture = 2;
+				
+				if (landmark != Null && landmark.Gauge != Null)
+					landmark.Gauge.Clan = favorableClanCapture;
+				
+				value += 1 * playersOnLandmark.count;
+			}
+		}
+		else
+		{
+			if (blueCount > 0 && redCount > 0)
+			{
+				if (landmark != Null)
+					landmark.Gauge.Clan = 0;
+			}
+			else if (blueCount != 0 || redCount != 0)
+			{
+				favorableClanCapture = 0;
+			
+				if (clan == 2 && blueCount > 0)
+					favorableClanCapture = 1;
+				else if (clan == 1 && redCount > 0)
+					favorableClanCapture = 2;
+					
+				if (favorableClanCapture == clan)
+					favorableClanCapture = 3 - clan;
+				
+				if (landmark != Null && landmark.Gauge != Null)
+					landmark.Gauge.Clan = favorableClanCapture;
+					
+				if (favorableClanCapture != 0 && favorableClanCapture != clan)
+					value += 1 * playersOnLandmark.count;
+			}
+			
+			favorableClanCapture = 3 - clan;
+		}
+		
+		if (value >= S_MaxValue)
+		{
+			value = 0;
+			clan = favorableClanCapture;
+			UIManager.UIAll.SendNotice("", CUIConfig::ENoticeLevel::MatchInfo, Null, CUIConfig::EAvatarVariant::Default, CUIConfig::EUISound::Capture, 0);
+			Message::SendStatusMessage("Zone #" ^ zone ^ " captured!", 3000, 10);
+			
+			declare ShootType for Kings[clan] = Boolean[Integer];
+			declare ShootProj for Kings[clan] = False;
+			declare ShootPos for Kings[clan] = Vec3;
+			ShootProj = True;
+			ShootPos = <landmarkPos.X, landmarkPos.Y - 1., landmarkPos.Z>;
+			ShootType[1] = True;
+		}
+		
+		CaptureProgression[zone] = value;
+		CaptureClan[zone] = clan;
+		
+		declare netwrite Integer[Integer] net_CurrentZonesProgression for Teams[0];
+		declare netwrite Integer[Integer] net_ZonesClan for Teams[0];
+		declare netwrite Integer[Integer] net_favorableClanZone for Teams[0];
+		declare netwrite Integer net_MaxValue for Teams[0];
+		declare netwrite Vec3[Integer] net_zonesPos for Teams[0];
+		declare netwrite Boolean net_varsAreReady for Teams[0];
+		declare netwrite Integer[Integer][Integer] net_PlayerCount for Teams[0];
+		
+		net_CurrentZonesProgression[zone] = value;
+		net_ZonesClan[zone] = clan;
+		net_favorableClanZone[zone] = favorableClanCapture;
+		net_MaxValue = S_MaxValue;
+		net_PlayerCount[zone] = [0 => 0];
+		net_PlayerCount[zone][0] = blueCount;
+		net_PlayerCount[zone][1] = redCount;
+		net_zonesPos[zone] = landmarkPos;
+			
+		net_varsAreReady = True;
+	}
+}
+
+Integer equiClan()
+{
+	if (ClansNbPlayers[1] > ClansNbPlayers[2])
+		return 2;
+	return 1;
+}
+
+Void ManagePlayers()
+{
+	foreach (player in Players)
+	{
+		if (player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned)
+		{
+			if (player.CurrentClan == 0 || player.CurrentClan != player.RequestedClan)
+			{
+				SetPlayerClan(player, player.RequestedClan);
+			}
+			if (player.CurrentClan == 0)
+			{
+				SetPlayerClan(player, equiClan());
+			}
+			
+			declare UI <=> UIManager.GetUI(player);
+			declare netread Net_playerWantedKit for UI = "soldier";
+			
+			declare lastTime for player = 0;
+			declare netwrite Net_playerMayChooseThisKit for player = "";
+			Net_playerMayChooseThisKit = Net_playerWantedKit;
+		
+			Kits::SetKit(player, Net_playerWantedKit);
+			SM::SpawnPlayer(player, player.CurrentClan, Spawns[player.CurrentClan], Now);
+		}
+	}
+}
+
+CSmMode::EWeapon GetWeaponEnum(Integer num)
+{
+	if (num == 1)
+		return CSmMode::EWeapon::Rocket;
+	if (num == 2)
+		return CSmMode::EWeapon::Laser;
+	if (num == 3)
+		return CSmMode::EWeapon::Arrow;
+	if (num == 4)
+		return CSmMode::EWeapon::Nucleus;
+	return CSmMode::EWeapon::Rocket;
+}
+
+Void ManageEvents()
+{
+	foreach (event in PendingEvents)
+	{
+		log(event.Type);
+		if (event.Type == CSmModeEvent::EType::OnShoot)
+		{
+			//CrystalObject.SetPositionAndVel(event.Shooter.Position, <0., 0., 0.>);
+		}
+		if (event.Type == CSmModeEvent::EType::OnActionEvent)
+		{
+			+++OnActionEvent+++
+			Kits::OnActionEvent(event);
+		}
+		if (event.Type == CSmModeEvent::EType::OnActionCustomEvent) 
+		{
+			declare armorStart = 0;
+			declare e <=> event;
+			
+			if (e.Victim != Null)
+				armorStart = e.Victim.ArmorMax;
+			
+			Kits::OnActionCustomEvent(e);
+			
+			if (Kings.exists(event.Victim))
+			{
+				declare WeaponMultiplier = 1;
+				declare armorDif = MathLib::FloorInteger((armorStart - e.Victim.Armor) * 0.0025);
+			
+				if (CanSteal && event.Shooter.CurrentClan == StealingClan)
+				{
+					if (ClanScoreValues[3 - StealingClan] > 0)
+						ClanScoreValues[StealingClan] = MathLib::Clamp(ClanScoreValues[StealingClan] + armorDif, 0, S_PointsToWinRound);
+					ClanScoreValues[3 - StealingClan] = MathLib::Clamp(ClanScoreValues[3 - StealingClan] - armorDif, 0, S_PointsToWinRound);
+				}
+				event.Victim.Armor = event.Victim.ArmorMax;			
+			}
+		}
+		if (event.Type == CSmModeEvent::EType::OnHit)
+		{
+			log(event.ShooterTurret == Null);
+			if (event.Victim == Null)
+				Discard(event);
+			else if (event.ShooterTurret == Null && event.Shooter != Null
+							&& event.Shooter.CurrentClan != event.Victim.CurrentClan)
+			{		
+				if (Kings.exists(event.Victim))
+					foreach (king in Kings)
+					{
+						if (event.Victim == king)
+						{
+							if (CanSteal && event.Shooter.CurrentClan == StealingClan)
+							{
+								declare WeaponMultiplier = 1;
+								if (event.WeaponNum == GetWeaponNum(CSmMode::EWeapon::Arrow))
+									WeaponMultiplier = 2;
+								if (event.WeaponNum == GetWeaponNum(CSmMode::EWeapon::Nucleus))
+									WeaponMultiplier = 4;
+								if (event.WeaponNum == GetWeaponNum(CSmMode::EWeapon::Laser))
+									WeaponMultiplier = 3;
+							
+								if (ClanScoreValues[3 - StealingClan] > 0)
+									ClanScoreValues[StealingClan] = MathLib::Clamp(ClanScoreValues[StealingClan] + S_StormiumRemovalOnHit * WeaponMultiplier, 0, S_PointsToWinRound);
+								ClanScoreValues[3 - StealingClan] = MathLib::Clamp(ClanScoreValues[3 - StealingClan] - S_StormiumRemovalOnHit * WeaponMultiplier, 0, S_PointsToWinRound);
+								event.Victim.Armor += event.Damage;
+								AddPlayerAmmo(event.Shooter, GetWeaponEnum(event.WeaponNum), 0.75);
+								
+								PassOn(event);
+							}
+							else
+								Discard(event);
+						}
+					}
+				else
+				{
+					event.Shooter.Score.RoundPoints += 1;
+					PassOn(event);
+				}
+			}
+			else if (event.ShooterTurret != Null)
+			{
+				log(event.Object == Null);
+				PassOn(event);
+			}
+		}
+		else
+			PassOn(event);
+	}
+}
+
+Void ManageScores()
+{
+	declare clanProgress = [1 => 0, 2 => 0];
+	foreach (landmark in AllCaptureZones)
+	{
+		for (y, 1, 2)
+		{
+			if (CaptureClan[landmark] == y)
+				clanProgress[y] += 1;
+		}
+	}
+	
+	declare clanCantSteal = 0;
+	for (x, 1, 2)
+	{
+		if (clanProgress[x] == CaptureClan.count)
+		{
+			StealingClan = x;
+			if (!CanSteal)
+			{
+				declare netwrite net_stealClan for Teams[0] = x;
+				net_stealClan = x;
+			
+				CanSteal = True;
+				clanCantSteal = 0;
+				Message::SendBigMessage(x, "Steal the stormium of the enemy!", 3000, 100);
+				Message::SendBigMessage(3 - x, "Protect your king!", 3000, 100);
+				
+				MB_Sleep(1);
+				
+				UIManager.UIAll.SendNotice(Teams[2 - x].ColorizedName ^ "$>'s King is in danger!", CUIConfig::ENoticeLevel::Default, Null, CUIConfig::EAvatarVariant::Default, CUIConfig::EUISound::Record, 1);
+			}
+		}
+		else
+			clanCantSteal += 1;
+		
+		if (UpdateScore <= Now - 1000)
+		{
+			ClanScoreValues[x] += clanProgress[x];
+		}
+	}
+	
+	if (clanCantSteal == 2)
+	{
+		CanSteal = False;
+		StealingClan = 0;
+		
+		declare netwrite net_stealClan for Teams[0] = 0;
+		net_stealClan = 0;
+	}
+	
+	if (UpdateScore <= Now - 1000)
+		UpdateScore = Now;
+		
+	declare netwrite Integer[Integer] net_ClanScoreValues for Teams[0];
+	declare netwrite Integer net_PointsToWinRound for Teams[0];
+	net_ClanScoreValues = ClanScoreValues;
+	net_PointsToWinRound = S_PointsToWinRound;
+	
+	for (x, 1, 2)
+		if (ClanScoreValues[x] >= S_PointsToWinRound)
+		{
+			MB_StopRound = True;
+			RoundWinner = x;
+		}
+}

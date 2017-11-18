@@ -1,0 +1,773 @@
+/**
+ *	Mode melee
+ */
+
+#Extends "Modes/ShootMania/Base/ModeBase.Script.txt"
+
+#Const	CompatibleMapTypes	"MeleeArena, TeamdeatchmatchArena, TeamDMArena, TeamArena, BattleArena, KingdomArena, AgEArena, AgeArena"
+#Const	Version				"2014-07-25"
+#Const	ScriptName			"Melee.Script.txt"
+
+#Include "MathLib" as MathLib
+#Include "TextLib" as TextLib
+#Include "Libs/Nadeo/Message.Script.txt" as Message
+#Include "Libs/Nadeo/Interface.Script.txt" as Interface
+#Include "Libs/Nadeo/ShootMania/SM.Script.txt" as SM
+#Include "Libs/Nadeo/ShootMania/Score.Script.txt" as Score
+#Include "Libs/Nadeo/ShootMania/SpawnScreen.Script.txt" as SpawnScreen
+#Include "Libs/Nadeo/Spectators.Script.txt" as Spec
+#Include "Libs/Nadeo/Layers2.Script.txt" as Layers
+#Include "Libs/Stormium/Kits.Script.txt" as Kits
+#Include "Libs/Stormium/SpawnScreen.Script.txt" as StormiumSS
+#Include "Libs/Stormium/Interface.Script.txt" as StormiumIT
+#Include "Libs/Stormium/InterfaceClassSelector.Script.txt" as StormiumITCS
+#Include "Libs/Stormium/Mathf.Script.txt" as Mathf
+
+// ---------------------------------- //
+// Settings
+// ---------------------------------- //
+#Setting S_TimeLimit	80 as _("Time limit")		///< Time limit on a map
+#Setting S_RespawnTime 10 as _("Time for respawning and player connecting freely")
+#Setting S_TornadoTime 30 as _("Tornado time")
+#Setting S_SegmentCount 3 as _("Segment count of a capture point")
+#Setting S_PointsToWinRound 500 as _("Points to win a round")
+#Setting S_MaxTurns 2 as _("Max turns")
+#Setting S_CheckpointTurretLegacy True as _("Get turret based on a radius")
+#Setting S_TurretRadiusLegacy 15
+#Setting S_MaxValue	1500
+#Setting S_FakeCaptureRadius 6.5
+#Setting S_StormiumRemovalOnHit 2
+
+
+#Const C_NbBots			1	///< Number of bots
+
+#Const C_SoundDirectory "file://Media/Sounds/kingdom/"
+#Const C_Sound_NearPoleUnderAttack "nearestpoleunderattack.ogg"
+#Const C_Sound_MiddlePoleUnderAttack "middlepoleunderattack.ogg"
+#Const C_Sound_FarPoleUnderAttack "farthestpoleunderattack.ogg"
+#Const C_Sound_PoleUnderAttack "" //< uniquement si il y a plus de 3 checkpoints
+#Const C_Sound_ProtectYourKing "protectyourking.ogg"
+#Const C_Sound_AttackEnemeyKing "attackenemyking.ogg"
+#Const C_Sound_CrystalSpawned ""
+#Const C_Sound_ProtectCrystal ""
+#Const C_Sound_AttackCrystal ""
+
+#Const Description _("TYPE: Free for all\nOBJECTIVE: Hit your opponents to score points. The first player to reach the points limit or the player with the highest score at the end of the time limit wins the map.")
+
+declare CSmMapLandmark[][Integer] MainSpawns;
+declare CSmMapLandmark[][Integer] Spawns;
+declare CSmMapLandmark[Integer] ObservatorySpawns;
+declare Integer[Integer] MembersInBattle;
+declare CSmMapLandmark[] NeutralSpawns;
+declare	Integer[Integer] CaptureProgression;
+declare	Integer[Integer] CaptureClan;
+declare Integer[Integer] ClanScoreValues;
+declare CTeam MapWinner;
+declare Integer RoundWinner;
+declare Integer UpdateScore;
+declare Boolean IsFirstElimination;
+declare Ident Action_CrystalExplosion;
+declare Boolean TornadoIsEnabled;
+declare Real TimeDelta;
+declare Integer lastTimeDelta;
+
+// ---------------------------------- //
+// Extend
+// ---------------------------------- //
+
+***LogVersion***
+***
+MB_LogVersion(ScriptName, Version);
+MB_LogVersion(SM::GetScriptName(), SM::GetScriptVersion());
+MB_LogVersion(Score::GetScriptName(), Score::GetScriptVersion());
+MB_LogVersion(Message::GetScriptName(), Message::GetScriptVersion());
+MB_LogVersion(Interface::GetScriptName(), Interface::GetScriptVersion());
+MB_LogVersion(SpawnScreen::GetScriptName(), SpawnScreen::GetScriptVersion());
+***
+
+// ---------------------------------- //
+// Set rules
+// ---------------------------------- //
+***Rules***
+***
+	ModeStatusMessage = _("TYPE: Team Deathmatch\nOBJECTIVE: Hit a maximum of team opponents to win.");
+
+	StormiumSS::SetName("Team Deathmatch");
+	StormiumSS::SetGoal("""BLUE against RED.
+To win, you need to eliminate the other team before the end time.
+The team with a number of 20 points wins the match.""");
+	StormiumSS::SetDescription("""► In attack or defense, you can choose among 9 kits ! 
+You have a main weapon + other weapons/actions.
+
+► Every time you are eliminated, you are redirected to the observatory spot.
+If an ally of your eliminate an ennemy, you will be respawned, it's the SWAP method.""");
+	//StormiumSS::SetScoreManialink(GetScoreManialink());
+	StormiumIT::Load(StormiumIT::C_ModeAgE);
+	StormiumIT::ShowCustomCoutdown(True);
+	StormiumIT::ShowCustomScores(True);
+	StormiumIT::ShowCustomMarkers(True);
+	StormiumIT::SetActive(True);
+***
+
+// ---------------------------------- //
+// Server start
+// ---------------------------------- //
+***StartServer***
+***
+
+ActionList_Begin();
+Action_CrystalExplosion = ActionList_Add("CrystalExplosion.Action.Gbx");
+ActionList_End();
+
+Kits::StartServer();
+
+// ---------------------------------- //
+// Set mode options
+UseClans = True;
+UseAutoSpawnBots = False;
+UseAutoRespawnBots = False;
+MB_UseSectionRound = True;
+
+Layers::Create("layer_HUD", layer_HUD());
+//Layers::Create("Champions_ChoosingClass", Layer_ChoosingClass());
+StormiumITCS::Load();
+
+// ---------------------------------- //
+// Create the rules
+---Rules---
+
+Interface::CreateRank();
+
+// ---------------------------------- //
+// Create the scores table
+ST2::SetStyle("LibST_SMBaseTeams");
+ST2::SetStyle("LibST_SMBasePoints");
+MB_SetScoresTableStyleFromXml(S_ScoresTableStylePath);
+ST2::Build("SM");
+***
+
+***InitMap***
+***
+declare PrevPointsLimit = -1;
+***
+
+// ---------------------------------- //
+// Map start
+// ---------------------------------- //
+***StartMap***
+***
+declare netwrite Boolean net_varsAreReady for Teams[0];
+net_varsAreReady = False;
+
+Users_SetNbFakeUsers(0, 0);
+Score::MatchBegin();
+Score::RoundBegin();
+
+SM::SetupDefaultVisibility();
+
+while(Players.count == 0)
+	yield;
+
+// ---------------------------------- //
+// Init bases
+foreach (Base in MapBases) {
+	Base.Clan = 0;
+	Base.IsActive = False;
+}
+
+// ---------------------------------- //
+// Init scores
+MB_Sleep(1); ///< Allow the scores array to be sorted
+foreach (Score in Scores) {
+	declare Integer LastPoint for Score;
+	LastPoint = 0;
+}
+declare LeadId = NullId;
+if (Scores.existskey(0)) LeadId = Scores[0].User.Id;
+
+// ---------------------------------- //
+// New map sound
+UIManager.UIAll.SendNotice("", CUIConfig::ENoticeLevel::MatchInfo, Null, CUIConfig::EAvatarVariant::Default, CUIConfig::EUISound::StartRound, 0);
+UIManager.UIAll.NoticesFilter_LevelToShowAsBigMessage = CUIConfig::ENoticeLevel::MatchInfo;
+UIManager.UIAll.NoticesFilter_HideMapWarning = True;
+
+StartTime = Now;
+
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing;
+UIManager.UIAll.UISequence_CustomMTClip = "None";
+
+declare CurrentTimeLimit = S_TimeLimit + 4000;
+
+InitLandmarks();
+StormiumSS::Reload();
+***
+
+***StartRound***
+***
+	StartTime = Now;
+	UIManager.UIAll.BigMessage = "New round.";
+	MB_Sleep(1500);
+	UIManager.UIAll.BigMessage = "";
+
+	ClanScoreValues = [1 => 0, 2 => 0];
+
+	UIManager.UIAll.UISequence = CUIConfig::EUISequence::Playing;
+	if (S_TimeLimit > 0) EndTime = StartTime + (S_TimeLimit * 1000) + (S_TornadoTime * 1000) + 4000;
+	else EndTime = -1;
+	
+	UIManager.UIAll.CountdownEndTime = Now + (S_TimeLimit * 1000);
+	
+	/*CrystalObject <=> ObjectCreate(Object_KingdomCrystalID);
+	
+	if (CrystalObject != Null)
+	{	
+		foreach (landmark in MapLandmarks)
+		{
+			log(landmark.Tag);
+			if (landmark.Tag == "AdvPos")
+			{
+				//CrystalObject.SetPositionAndVel(landmark.Position, <0., 0., 0.>);
+			}
+		}	
+	}*/
+	
+	//OffZoneCenterLandmarkId = NullId;
+	OffZoneRadius = -1.;
+	OffZoneRadiusSpeed = 1.;
+	
+	RoundWinner = 0;
+	IsFirstElimination = False;
+	TornadoIsEnabled = False;
+	
+	Message::SetDefaultStatusMessage("Respawn free time!");
+***
+
+***Yield***
+***
+	Kits::Yield();
+	StormiumITCS::Loop();
+	StormiumSS::Loop();
+	StormiumIT::Loop();
+	
+	Layers::Attach("layer_HUD");
+***
+
+// ---------------------------------- //
+// Play loop
+// ---------------------------------- //
+***PlayLoop***
+***
+	TimeDelta = (Now - lastTimeDelta) / 1000.;
+	lastTimeDelta = Now;
+
+	Kits::PlayLoop();
+	Message::Loop();
+
+	ManagePlayers();
+	ManageEvents();
+	ManageScores();
+	ManageGame();
+	
+	if (EndTime > 0 && EndTime < Now)
+	{	
+		MB_StopRound();
+	}
+***
+
+***EndRound***
+***
+	Score::RoundEnd();	
+
+	if (!MatchEndRequested)
+	{
+		/*foreach (player in AllPlayers)
+		{
+			if (player != Kings[3 - RoundWinner])
+				UnspawnPlayer(player);
+		}
+	
+		ViewRange(Kings[3 - RoundWinner].Position, 250.);
+		
+		MB_Sleep(3000);*/
+		
+		UIManager.UIAll.UISequence = CUIConfig::EUISequence::CustomMTClip;
+		
+		if (RoundWinner == 1)
+			UIManager.UIAll.UISequence_CustomMTClip = "ExploRed";
+		else if (RoundWinner == 2)
+			UIManager.UIAll.UISequence_CustomMTClip = "ExploBlue";
+			
+		UIManager.UIAll.OverlayHideGauges = True;
+		UIManager.UIAll.OverlayHideCrosshair = True;
+	
+		if (RoundWinner > 0)
+		{
+			ClanScores[RoundWinner] += 1;
+			
+			UIManager.UIAll.BigMessage = Teams[RoundWinner - 1].ColorizedName ^ " wins the round!";
+		}
+		else
+			UIManager.UIAll.BigMessage = "Draw.";
+		
+		MB_Sleep(2000);
+		
+		SM::UnspawnAllPlayers();
+		
+		UIManager.UIAll.OverlayHideGauges = False;
+		UIManager.UIAll.OverlayHideCrosshair = False;
+		
+		MB_Sleep(1);
+		
+		UIManager.UIAll.UISequence_CustomMTClip = "None";
+		
+		UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
+		MB_Sleep(1000);		
+		MB_Sleep(1000);
+		MB_Sleep(2000);
+		UIManager.UIAll.BigMessage = "";
+		UIManager.UIAll.StatusMessage = "";
+		
+		for (i, 1, 2)
+			if (ClanScores[i] >= S_MaxTurns)
+			{
+				MapWinner <=> Teams[i - 1];
+				MB_StopMap();
+			}
+	}
+	else
+	{
+		MB_StopMap();
+		MapWinner = Null;
+	}
+***
+
+// ---------------------------------- //
+// Map end
+// ---------------------------------- //
+***EndMap***
+***
+Message::SetDefaultStatusMessage("");
+
+EndTime = -1;
+Score::MatchEnd(True);
+
+Message::CleanBigMessages();
+UIManager.UIAll.BigMessageSound = CUIConfig::EUISound::EndRound;
+UIManager.UIAll.BigMessageSoundVariant = 0;
+if (MapWinner != Null) {
+	UIManager.UIAll.BigMessage = TextLib::Compose(_("$<%1$> wins the match!"), MapWinner.ColorizedName);
+} else {
+	UIManager.UIAll.BigMessage = _("|Match|Draw");
+}
+MB_Sleep(2000);
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::EndRound;
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::ForcedVisible;
+MB_Sleep(5000);
+
+UIManager.UIAll.UISequence = CUIConfig::EUISequence::Podium;
+while(!UIManager.UIAll.UISequenceIsCompleted) {
+	MB_Yield();
+}
+
+UIManager.UIAll.ScoreTableVisibility = CUIConfig::EVisibility::Normal;
+UIManager.UIAll.BigMessage = "";
+***
+
+// ---------------------------------- //
+// Server end
+// ---------------------------------- //
+***EndServer***
+***
+Interface::DestroyRank();
+SpawnScreen::DestroyRules();
+SpawnScreen::DestroyScores();
+SpawnScreen::DestroyMapInfo();
+***
+
+Integer GetSide(Integer clan)
+{
+	declare isSided = MB_SectionRoundNb % 2 == 0;
+	if (isSided)
+		return 3 - clan;
+	return clan;
+}
+
+CSmMapLandmark[] GetAvailableSpawns(Integer clan)
+{
+	declare CSmMapLandmark[] availableSpawns;
+	foreach (clanSpawns in MainSpawns)
+	{
+		foreach (spawn in clanSpawns)
+		{
+			if (spawn.Order == clan || spawn.Order == 0)
+				if (spawn.PlayerSpawn != Null)
+				{
+					availableSpawns.add(spawn);
+				}
+		}
+	}
+	
+	if (availableSpawns.count == 0)
+	{
+		foreach (spawn in MapLandmarks_PlayerSpawn)
+		{
+			availableSpawns.add(spawn);
+		}
+	}
+	
+	return availableSpawns;
+}
+
+CSmMapLandmark GetObservatorySpawn(Integer clan)
+{
+	return ObservatorySpawns[clan];
+}
+
+CSmMapLandmark[] GetAvailableRespawnSpawns(Integer clan)
+{
+	declare CSmMapLandmark[] availableSpawns;
+	foreach (clanSpawns in Spawns)
+	{
+		foreach (spawn in clanSpawns)
+		{
+			if (spawn.Order == clan || spawn.Order == 0)
+				availableSpawns.add(spawn);
+		}
+	}
+	
+	if (availableSpawns.count == 0)
+		return GetAvailableSpawns(clan);
+	return availableSpawns;
+}
+
+Void SpawnPlayer(CSmPlayer player)
+{
+	SetPlayerClan(player, player.RequestedClan);
+
+	declare spawns = GetAvailableSpawns(GetSide(player.CurrentClan));
+	declare spawn <=> spawns[MathLib::Rand(0, spawns.count - 1)];
+
+	declare UI <=> UIManager.GetUI(player);
+	declare netread Net_playerWantedKit for UI = "soldier";
+	declare netwrite Net_playerMayChooseThisKit for player = "";
+	Net_playerMayChooseThisKit = Net_playerWantedKit;
+
+	Kits::SetKit(player, Net_playerWantedKit);
+	
+	SM::SpawnPlayer(player, player.CurrentClan, spawn.PlayerSpawn, Now);
+}
+
+Void SpawnPlayerObservatory(CSmPlayer player)
+{
+	if (player.CurrentClan == 0)
+		SetPlayerClan(player, player.RequestedClan);
+
+	declare spawn <=> GetObservatorySpawn(player.CurrentClan);
+	
+	declare UI <=> UIManager.GetUI(player);
+	declare netread Net_playerWantedKit for UI = "soldier";
+	declare netwrite Net_playerMayChooseThisKit for player = "";
+	Net_playerMayChooseThisKit = Net_playerWantedKit;
+
+	Kits::SetKit(player, Net_playerWantedKit);
+	
+	SM::SpawnPlayer(player, player.CurrentClan, spawn.PlayerSpawn, Now);
+}
+
+Void GameModeRespawnPlayer(CSmPlayer player)
+{
+	declare respawnablespawns = GetAvailableRespawnSpawns(GetSide(player.CurrentClan));
+	declare spawn <=> respawnablespawns[MathLib::Rand(0, respawnablespawns.count - 1)];
+	
+	player.Armor = player.ArmorMax;
+	
+	RespawnPlayer(player, spawn);	
+}
+
+Void InitLandmarks()
+{
+	foreach (spawn in MapLandmarks)
+	{						
+		if (spawn.Tag == "CSpawn")
+		{
+			if (MapLandmarks_PlayerSpawn.exists(spawn))
+			{
+				if (!MainSpawns.existskey(spawn.Order))
+					MainSpawns[spawn.Order] = CSmMapLandmark[];
+			
+				MainSpawns[spawn.Order].add(spawn);
+			}
+			else
+			{		
+				if (!Spawns.existskey(spawn.Order))
+					Spawns[spawn.Order] = CSmMapLandmark[];
+			
+				Spawns[spawn.Order].add(spawn);
+			}
+		}
+		else if (spawn.Tag == "OSpawn")
+		{
+			ObservatorySpawns[spawn.Order] <=> spawn;
+		}
+	}
+}
+
+CSmPlayer Swap(CSmPlayer victim)
+{
+	declare CSmPlayer allyToRevive;
+	declare Integer lowestEliminationTime = 9999999999;
+	declare eliminatedPlayerCount = 0;
+	declare alivePlayerCount = 0;
+	
+	foreach (player in Players)
+	{
+		declare meta_EliminationTime as otherPlayer_EliminationTime for player = -1;
+		declare meta_IsInObservationMode for player = False;
+		if ((otherPlayer_EliminationTime != -1 || meta_IsInObservationMode)
+		&& player.CurrentClan != victim.CurrentClan
+		&& lowestEliminationTime > otherPlayer_EliminationTime)
+		{
+			lowestEliminationTime = otherPlayer_EliminationTime;
+			meta_IsInObservationMode = False;
+			allyToRevive <=> player;
+		}
+		
+		if (player.CurrentClan == victim.CurrentClan)
+		{
+			if (player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned)
+				eliminatedPlayerCount += 1;
+			else
+				alivePlayerCount += 1;
+		}
+	}
+	
+	if (allyToRevive != Null && !TornadoIsEnabled)
+	{
+		declare variant = 4 - alivePlayerCount;
+	
+		Message::SendBigMessage("SWAP!", 3000, 10);
+		Message::SendStatusMessage(allyToRevive.Name^"$z$> has been swapped by the death of "^victim.Name,
+			3000, 10,
+			CUIConfig::EUISound::TiePoint, variant);
+		
+		declare meta_RespawnTime for allyToRevive = 0;
+		meta_RespawnTime = Now;
+		declare meta_NeedRevive for allyToRevive = False;
+		meta_NeedRevive = True;
+	}
+	return allyToRevive;
+}
+
+// ----------------------------------------------- >
+// Managers
+// ----------------------------------------------- > 
+
+Void ManagePlayers()
+{
+	foreach (player in Players)
+	{
+		declare meta_RespawnTime for player = -1;
+		declare meta_NeedRevive for player = False;
+		declare meta_EliminationTime for player = -1;
+		declare meta_IsInObservationMode for player = False;
+	
+		if (!TornadoIsEnabled)
+		{
+			if (player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned
+			&& StartTime + (S_RespawnTime * 1000) > Now)
+			{
+				meta_EliminationTime = -1;
+				SpawnPlayer(player);
+				
+				meta_IsInObservationMode = False;
+			}
+			else if (player.SpawnStatus == CSmPlayer::ESpawnStatus::NotSpawned)
+			{
+				SpawnPlayerObservatory(player);
+				meta_IsInObservationMode = True;
+			}
+			else if (meta_NeedRevive
+			&& player.SpawnStatus == CSmPlayer::ESpawnStatus::Spawned)
+			{
+				meta_EliminationTime = -1;
+				meta_NeedRevive = False;
+				GameModeRespawnPlayer(player);
+				
+				meta_IsInObservationMode = False;
+			}
+		}
+		else if (meta_IsInObservationMode)
+		{
+			UnspawnPlayer(player);
+		}
+	}
+}
+
+Void ManageEvents()
+{
+	foreach (event in PendingEvents)
+	{
+		if (event.Type == CSmModeEvent::EType::OnActionEvent)
+		{
+			+++OnActionEvent+++
+			Kits::OnActionEvent(event);
+		}
+		else if (event.Type == CSmModeEvent::EType::OnActionCustomEvent) 
+		{
+			declare e <=> event;
+			Kits::OnActionCustomEvent(e);
+		}
+		else if (event.Type == CSmModeEvent::EType::OnPlayerRequestRespawn)
+		{
+			declare meta_EliminationTime for event.Player = -1;
+			if (!(StartTime + (S_RespawnTime * 1000) > Now) && meta_EliminationTime == -1)
+			{
+				meta_EliminationTime = EndTime + 10000; //< lowest priority for swapping
+				declare meta_NeedRevive for event.Player = False;
+				meta_NeedRevive = False;
+				
+				Message::SendBigMessage(event.Player, "You gave up!", 3000, 10, CUIConfig::EUISound::PhaseChange, 1);
+				Message::SendStatusMessage(event.Player.Name ^ "$z$s$> gave up!", 3000, 10, CUIConfig::EUISound::PhaseChange, 1);
+				
+				Swap(event.Player);
+			}
+			
+			PassOn(event);
+		}
+		else if (event.Type == CSmModeEvent::EType::OnArmorEmpty)
+		{
+			declare meta_EliminationTime for event.Victim = -1;
+			meta_EliminationTime = Now;
+			
+			if (event.Shooter != Null && !TornadoIsEnabled)
+			{
+				EndTime += 3000;
+				UIManager.UIAll.CountdownEndTime += 3000;
+			}
+			
+			Swap(event.Victim);
+			if (IsFirstElimination)
+			{
+				Message::SendBigMessage(_("First elimination!"), 3000, 10, CUIConfig::EUISound::FirstHit, 0);
+			}
+			
+			PassOn(event);
+		}
+		else
+			PassOn(event);
+	}
+}
+
+Void ManageScores()
+{
+
+}
+
+Void ManageGame()
+{
+	declare TornadoStartTime for This = 0;
+
+	// Check if we are in free time
+	if (StartTime + (S_RespawnTime * 1000) > Now)
+	{
+		declare freeTime = StartTime + (S_RespawnTime * 1000);
+		Message::SetDefaultStatusMessage("Respawn free time! (" ^ MathLib::NearestInteger((freeTime - Now) * 0.001) ^ ")");
+	}
+	else //< not a free time
+	{
+		Message::SetDefaultStatusMessage("");
+	}
+
+	// Check if we need to enable the tornado
+	if (UIManager.UIAll.CountdownEndTime <= Now
+	&& UIManager.UIAll.CountdownEndTime != -1)
+	{
+		UIManager.UIAll.CountdownEndTime = -1;
+		TornadoIsEnabled = True;
+		TornadoStartTime = Now;
+		
+		declare spawns = GetAvailableRespawnSpawns(MathLib::Rand(1, 2));
+		
+		OffZoneCenterLandmarkId = spawns[MathLib::Rand(0, spawns.count - 1)].Id;
+	}
+	
+	if (TornadoIsEnabled)
+	{		
+		if (EndTime > Now + 10000)
+		{
+			declare time = EndTime - Now;
+			declare startTimeTornado = (EndTime - Now) * 0.001;
+			startTimeTornado -= 10;
+			startTimeTornado /= S_TornadoTime;
+		
+			OffZoneRadius = 10 + (startTimeTornado * 350.);
+			OffZoneRadiusSpeed = 0.;
+		}
+		else
+		{
+			OffZoneRadius = 10.;
+		}
+	}
+	
+	MembersInBattle[1] = 0;
+	MembersInBattle[2] = 0;
+	foreach (player in Players)
+	{
+		if (player.CurrentClan == 0)
+			continue;
+			
+		declare meta_IsInObservationMode for player = False;
+			
+		if (meta_IsInObservationMode)
+			continue;
+			
+		MembersInBattle[player.CurrentClan] += 1;
+	}
+	
+	for (i, 1, 2)
+	{
+		if (MembersInBattle[i] <= 0)
+		{
+			UIManager.UIAll.StatusMessage = "A Team was eliminated.";
+
+			RoundWinner = 3 - i;
+			
+			XmlRpc.SendCallback("Stratium_TeamElimination", ""^RoundWinner);
+			MB_StopRound = True;
+		}
+	}
+	
+	if (Now > EndTime && EndTime > 0) 
+	{
+		if (MembersInBattle[1] < MembersInBattle[2]) 
+			RoundWinner = 2;
+		else if (MembersInBattle[1] > MembersInBattle[2]) 
+			RoundWinner = 1;
+			
+		if (MembersInBattle[1] != MembersInBattle[2]) 
+		{
+			UIManager.UIAll.StatusMessage = "Time out!";
+			XmlRpc.SendCallback("Stratium_TimeOut", ""^RoundWinner);
+			MB_StopRound = True;
+		}
+		else
+		{
+			MB_StopRound = True;
+		}
+	}
+}
+
+//>
+
+// ----------------------------------------------- >
+// Layers stuff
+// ----------------------------------------------- >
+
+Text layer_HUD()
+{
+	return """
+	
+	""";
+}
+
+//>
